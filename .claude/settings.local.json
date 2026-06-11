@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create *)",
+      "Bash(npm install *)",
+      "Bash(npx vue-tsc *)",
+      "Bash(npx vite *)",
+      "Bash(node -e \"const vr = require\\('vue-router'\\); console.log\\(Object.keys\\(vr\\).filter\\(k => k.includes\\('create'\\) || k.includes\\('Route'\\)\\).join\\('\\\\n'\\)\\)\")",
+      "Bash(node -e \"const vr = require\\('vue-router'\\); const t = Object.keys\\(vr\\).filter\\(k => k.toLowerCase\\(\\).includes\\('route'\\)\\); console.log\\(t.join\\('\\\\n'\\)\\)\")",
+      "Bash(node -e \"const pkg = require\\('vue-router/package.json'\\); console.log\\(pkg.version\\)\")",
+      "Bash(node -e \"const vr = require\\('vue-router'\\); console.log\\(vr.RouteRecordRaw ? 'has RouteRecordRaw' : 'no RouteRecordRaw'\\); console.log\\(Object.keys\\(vr\\).filter\\(k => k.toLowerCase\\(\\).includes\\('routerecord'\\) || k.toLowerCase\\(\\).includes\\('route_record'\\)\\).join\\('\\\\n'\\)\\)\")",
+      "Bash(node -e \"try { const vr = require\\('vue-router'\\); console.log\\('exports:', Object.keys\\(vr\\).length\\); Object.keys\\(vr\\).slice\\(0,30\\).forEach\\(k => console.log\\(k\\)\\); } catch\\(e\\) { console.log\\(e.message\\) }\")",
+      "Bash(start \"http://localhost:5173/\")",
+      "Bash(open \"http://localhost:5173/\")",
+      "Bash(cmd.exe /c start http://localhost:5173/)",
+      "Bash(curl -s http://localhost:5173/)",
+      "WebFetch(domain:localhost)",
+      "Bash(curl -s http://localhost:5173)"
+    ]
+  }
+}

@@ -1,0 +1,246 @@
+/* ============================================================
+   咖啡烘焙数据分析系统 - 全局样式变量与基础
+   轻量科技感 — 明亮冷灰蓝背景、蓝色主操作、数据优先
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;600;700&display=swap');
+
+:root {
+  /* ---------- 应用背景 ---------- */
+  --app-bg: #f5f7fb;
+  --surface: #ffffff;
+  --surface-subtle: #f8faff;
+  --surface-selected: #eef4ff;
+
+  /* ---------- 文字 ---------- */
+  --text-primary: #172033;
+  --text-secondary: #5d6880;
+  --text-tertiary: #8b95a7;
+
+  /* ---------- 边框 ---------- */
+  --border-default: #e5e9f2;
+  --border-strong: #d7ddea;
+
+  /* ---------- 操作色 ---------- */
+  --primary: #2f6bff;
+  --primary-hover: #2559d9;
+  --primary-subtle: #edf3ff;
+
+  --business-accent: #168477;
+  --business-accent-subtle: #eaf7f4;
+
+  --success: #1f9d68;
+  --success-subtle: #edf7f2;
+  --warning: #d78a16;
+  --warning-subtle: #fef8ef;
+  --danger: #d94b4b;
+  --danger-subtle: #fcefef;
+
+  /* ---------- 曲线颜色 ---------- */
+  --curve-bt: #df5b45;
+  --curve-et: #e5a029;
+  --curve-ror: #3478d4;
+  --curve-gas: #8b5cc7;
+  --curve-airflow: #20a184;
+  --curve-drum: #718096;
+
+  /* 批次对比颜色池 */
+  --batch-colors: #df5b45 #3478d4 #1f9d68 #8b5cc7 #e5a029 #d94b4b;
+
+  /* ---------- 排版 ---------- */
+  --font-sans: 'IBM Plex Sans', 'Noto Sans SC', -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', monospace;
+
+  /* 字号层级 */
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-base: 14px;
+  --fs-md: 16px;
+  --fs-lg: 18px;
+  --fs-xl: 22px;
+  --fs-2xl: 24px;
+  --fs-3xl: 32px;
+
+  --lh-tight: 1.3;
+  --lh-normal: 1.5;
+
+  /* ---------- 间距（4px 基础单位） ---------- */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* ---------- 圆角 ---------- */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  /* ---------- 尺寸 ---------- */
+  --sidebar-width: 224px;
+  --sidebar-collapsed-width: 64px;
+  --topbar-height: 56px;
+  --input-height: 36px;
+  --btn-height: 32px;
+  --table-row-height: 48px;
+  --page-min-width: 1024px;
+
+  /* ---------- 阴影（仅浮层使用） ---------- */
+  --shadow-overlay: 0 4px 16px rgba(0, 0, 0, 0.08);
+  --shadow-dropdown: 0 2px 8px rgba(0, 0, 0, 0.06);
+
+  /* ---------- 过渡 ---------- */
+  --transition-fast: 0.16s ease;
+  --transition-normal: 0.22s ease;
+}
+
+/* ---------- 全局重置 ---------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: var(--font-sans);
+  font-size: var(--fs-base);
+  line-height: var(--lh-normal);
+  color: var(--text-primary);
+  background: var(--app-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  height: 100%;
+}
+
+a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--primary-hover);
+  text-decoration: underline;
+}
+
+/* ---------- 滚动条 ---------- */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-default);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
+/* ---------- 等宽数字 ---------- */
+.num, .number, [data-mono] {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 通用工具类 ---------- */
+.text-xs { font-size: var(--fs-xs); }
+.text-sm { font-size: var(--fs-sm); }
+.text-base { font-size: var(--fs-base); }
+.text-md { font-size: var(--fs-md); }
+.text-lg { font-size: var(--fs-lg); }
+.text-xl { font-size: var(--fs-xl); }
+.text-2xl { font-size: var(--fs-2xl); }
+
+.text-secondary { color: var(--text-secondary); }
+.text-tertiary { color: var(--text-tertiary); }
+.text-primary { color: var(--primary); }
+.text-accent { color: var(--business-accent); }
+.text-success { color: var(--success); }
+.text-warning { color: var(--warning); }
+.text-danger { color: var(--danger); }
+
+.font-mono { font-family: var(--font-mono); }
+.font-medium { font-weight: 500; }
+.font-semibold { font-weight: 600; }
+.font-bold { font-weight: 700; }
+
+/* ---------- 状态色点 ---------- */
+.status-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.success { background: var(--success); }
+.status-dot.warning { background: var(--warning); }
+.status-dot.danger { background: var(--danger); }
+.status-dot.neutral { background: var(--text-tertiary); }
+.status-dot.info { background: var(--primary); }
+
+/* ---------- 状态标签（轻量） ---------- */
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.status-tag.planned {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.status-tag.completed {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.status-tag.draft {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.status-tag.done {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.status-tag.open {
+  background: var(--primary-subtle);
+  color: var(--primary);
+}
+
+.status-tag.closed, .status-tag.expired {
+  background: #f5f7fb;
+  color: var(--text-tertiary);
+}
+
+/* ---------- 淡入过渡 ---------- */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity var(--transition-normal);
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
