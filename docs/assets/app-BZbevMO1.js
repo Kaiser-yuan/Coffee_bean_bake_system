@@ -1,1 +1,0 @@
-import{i as e,j as t}from"./index-BprNNKA8.js";import"./mock-BqzS0vnJ.js";var n=e(`app`,()=>{let e=t(new Date().getFullYear()),n=t(!1),r=t(!1);function i(t){e.value=t}function a(){n.value=!n.value}return{currentYear:e,sidebarCollapsed:n,globalLoading:r,setYear:i,toggleSidebar:a}});export{n as t};
