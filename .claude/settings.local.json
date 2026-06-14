@@ -38,7 +38,12 @@
       "Bash(cat frontend/vite.config.ts)",
       "Bash(cat frontend/vite.config.js)",
       "Bash(pip install *)",
-      "Bash(python -c \"from app.main import app; print\\('App imports OK'\\)\")"
+      "Bash(python -c \"from app.main import app; print\\('App imports OK'\\)\")",
+      "Bash(git commit -m 'feat: 后端 Phase 1-8 全部完成 *)",
+      "Bash(ls backend/.env)",
+      "Bash(ls backend/alembic/versions/)",
+      "Bash(docker ps *)",
+      "Bash(git commit *)"
     ]
   }
 }
