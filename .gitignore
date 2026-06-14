@@ -6,3 +6,12 @@ Thumbs.db
 dist-ssr
 *.local
 Document/Key/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.env
+
+# Backend
+backend/data/uploads/

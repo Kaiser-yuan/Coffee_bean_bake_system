@@ -32,7 +32,13 @@
       "Bash(python -c ' *)",
       "Bash(rm -rf docs/assets docs/*.svg docs/index.html)",
       "Bash(cp -r frontend/dist/* docs/)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m 'v0.3.0: 按前端修改指南\\(GitHub审查版\\)全面修改 *)",
+      "Bash(ls frontend/vite.config*)",
+      "Bash(cat frontend/vite.config.ts)",
+      "Bash(cat frontend/vite.config.js)",
+      "Bash(pip install *)",
+      "Bash(python -c \"from app.main import app; print\\('App imports OK'\\)\")"
     ]
   }
 }

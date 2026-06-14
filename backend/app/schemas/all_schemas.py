@@ -1,0 +1,483 @@
+"""
+Pydantic schemas for request/response validation.
+Field naming: snake_case, matching DB and REST API.
+"""
+from datetime import datetime
+from pydantic import BaseModel, Field
+
+
+# ============================================================
+# Common
+# ============================================================
+class PaginatedResponse(BaseModel):
+    items: list
+    page: int
+    page_size: int
+    total: int
+
+
+class ErrorResponse(BaseModel):
+    code: str
+    message: str
+    details: dict | None = None
+    request_id: str | None = None
+
+
+# ============================================================
+# Auth
+# ============================================================
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_at: str
+    user_id: str
+    display_name: str | None
+
+
+# ============================================================
+# Standard Terms
+# ============================================================
+class TermResponse(BaseModel):
+    id: str
+    category: str
+    value: str
+    display_order: int
+    is_active: bool
+    usage_count: int
+
+    model_config = {"from_attributes": True}
+
+
+class TermCreateRequest(BaseModel):
+    category: str
+    value: str
+    display_order: int = 0
+
+
+class TermUpdateRequest(BaseModel):
+    value: str | None = None
+    display_order: int | None = None
+    is_active: bool | None = None
+
+
+# ============================================================
+# Green Beans
+# ============================================================
+class GreenBeanMatchResponse(BaseModel):
+    id: str
+    name: str
+    brand: str | None = None
+    harvest_season: str | None = None
+    processing_method: str | None = None
+    region: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class GreenBeanResponse(BaseModel):
+    id: str
+    name: str
+    variety: str | None = None
+    process: str | None = None
+    region: str | None = None
+    country: str | None = None
+    farm: str | None = None
+    elevation: str | None = None
+    brand: str | None = None
+    harvest_season: str | None = None
+    vendor_flavor_description: str | None = None
+    first_created_at: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class GreenBeanWithFirstPurchaseRequest(BaseModel):
+    # Green bean fields
+    name: str
+    variety: str | None = None
+    process: str | None = None
+    region: str | None = None
+    country: str | None = None
+    farm: str | None = None
+    elevation: str | None = None
+    brand: str | None = None
+    harvest_season: str | None = None
+    vendor_flavor_description: str | None = None
+
+    # Purchase batch fields
+    purchase_date: str | None = None
+    total_weight_grams: int
+    unit_price_fen_per_kg: int | None = None
+    moisture_content_percent: float | None = None
+    supplier: str | None = None
+    lot_number: str | None = None
+    notes: str | None = None
+
+
+class PurchaseBatchCreateRequest(BaseModel):
+    purchase_date: str
+    total_weight_grams: int
+    unit_price_fen_per_kg: int | None = None
+    moisture_content_percent: float | None = None
+    supplier: str | None = None
+    lot_number: str | None = None
+    notes: str | None = None
+
+
+# ============================================================
+# Purchase Batches
+# ============================================================
+class PurchaseBatchResponse(BaseModel):
+    id: str
+    green_bean_id: str
+    purchase_date: str | None = None
+    total_weight_grams: int
+    moisture_content_percent: float | None = None
+    unit_price_fen_per_kg: int | None = None
+    total_price_fen: int | None = None
+    supplier: str | None = None
+    lot_number: str | None = None
+    notes: str | None = None
+    remaining_weight_grams: int | None = None
+    allowed_actions: list[str] = []
+
+    model_config = {"from_attributes": True}
+
+
+class InventoryLedgerResponse(BaseModel):
+    id: str
+    event_type: str
+    related_entity_type: str | None = None
+    related_entity_id: str | None = None
+    change_grams: int
+    resulting_grams: int
+    created_at: str
+
+
+class InventoryAdjustmentRequest(BaseModel):
+    amount_grams: int
+    reason: str
+    notes: str | None = None
+
+
+# ============================================================
+# Roasting Batches
+# ============================================================
+class RoastingBatchCreateRequest(BaseModel):
+    purchase_batch_id: str
+    planned_at: str
+    planned_input_weight_grams: int
+    target_description: str | None = None
+    roast_level: str | None = None
+
+
+class BatchCompleteRequest(BaseModel):
+    roasted_at: str
+    actual_input_weight_grams: int
+
+
+class OutputWeightUpdateRequest(BaseModel):
+    output_weight_grams: int
+
+
+class BatchCompleteness(BaseModel):
+    missing_output_weight: bool
+    missing_curve: bool
+    missing_evaluation: bool
+    missing_review: bool
+    is_complete: bool
+
+
+class RoastingBatchResponse(BaseModel):
+    id: str
+    purchase_batch_id: str
+    status: str
+    planned_at: str | None = None
+    roasted_at: str | None = None
+    planned_input_weight_grams: int
+    actual_input_weight_grams: int | None = None
+    output_weight_grams: int | None = None
+    weight_loss_percent: float | None = None
+    total_time_seconds: int | None = None
+    development_time_seconds: int | None = None
+    development_ratio_percent: float | None = None
+    roast_level: str | None = None
+    target_description: str | None = None
+    color_tag: str | None = None
+    completeness: BatchCompleteness | None = None
+    allowed_actions: list[str] = []
+    green_bean_name: str | None = None
+    purchase_batch_label: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+# ============================================================
+# Curves
+# ============================================================
+class CurvePoint(BaseModel):
+    sample_index: int
+    elapsed_seconds: float
+    bean_temp_celsius: float | None = None
+    environment_temp_celsius: float | None = None
+    ror_celsius_per_minute: float | None = None
+    target_temp_celsius: float | None = None
+    heating_power_mode: str | None = None
+    heating_power_percent: int | None = None
+    smoke_damper_percent: int | None = None
+    roller_percent: int | None = None
+    power_status: str | None = None
+
+
+class CurveEvent(BaseModel):
+    type: str
+    label: str
+    time_seconds: float | None = None
+    bean_temp_celsius: float | None = None
+
+
+class CurveStage(BaseModel):
+    name: str
+    start_seconds: float
+    end_seconds: float
+    duration_seconds: float
+    ratio_percent: float
+    avg_ror: float | None = None
+
+
+class CurveControlChange(BaseModel):
+    time_seconds: float
+    parameter: str
+    old_value: float | None = None
+    new_value: float
+
+
+class CurveComparisonPoint(BaseModel):
+    sample_index: int
+    elapsed_seconds: float
+    aligned_seconds: float
+    bean_temp_celsius: float | None = None
+    environment_temp_celsius: float | None = None
+    ror_celsius_per_minute: float | None = None
+    heating_power_percent: int | None = None
+    smoke_damper_percent: int | None = None
+    roller_percent: int | None = None
+
+
+class CurveFileResponse(BaseModel):
+    id: str
+    roasting_batch_id: str
+    original_filename: str
+    file_size_bytes: int
+    source_type: str
+    format_type: str
+    parse_status: str
+    parse_error_code: str | None = None
+    parse_error_message: str | None = None
+    uploaded_at: str | None = None
+    parsed_at: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class CurveResponse(BaseModel):
+    curve_file: CurveFileResponse | None = None
+    summary: dict | None = None
+    stages: list[CurveStage] = []
+    events: list[CurveEvent] = []
+    points: list[CurvePoint] = []
+    control_changes: list[CurveControlChange] = []
+
+
+class MetricDifference(BaseModel):
+    metric: str
+    label: str
+    base_value: float | None = None
+    comparison_value: float | None = None
+    difference: float | None = None
+    unit: str | None = None
+    calculation_rule: str | None = None
+
+
+class CurveComparisonWarning(BaseModel):
+    code: str
+    severity: str
+    batch_id: str
+    message: str
+
+
+class CurveComparisonResponse(BaseModel):
+    base_batch_id: str
+    align_by: str
+    series: list[dict] = []
+    metric_differences: list[MetricDifference] = []
+    event_time_differences: list[dict] = []
+    warnings: list[CurveComparisonWarning] = []
+    calculation_meta: dict = {}
+
+
+# ============================================================
+# Questionnaires
+# ============================================================
+class QuestionnaireResponse(BaseModel):
+    id: str
+    roasting_batch_id: str
+    status: str
+    share_code: str
+    share_url: str | None = None
+    created_at: str
+    expires_at: str | None = None
+    closed_at: str | None = None
+    submission_count: int
+
+    model_config = {"from_attributes": True}
+
+
+class QuestionnaireCreateResponse(BaseModel):
+    id: str
+    status: str
+    share_code: str
+    share_url: str
+    expires_at: str | None = None
+
+
+class PublicQuestionnaireResponse(BaseModel):
+    share_code: str
+    roast_date: str | None = None
+    green_bean_name: str | None = None
+    status: str
+    expires_at: str | None = None
+
+
+# ============================================================
+# Evaluations
+# ============================================================
+class EvaluationSubmitRequest(BaseModel):
+    evaluator_name: str | None = None
+    evaluator_type: str | None = None
+    brew_method: str | None = None
+    drink_temperature: str | None = None
+    drink_form: str | None = None
+    dry_fragrance_score: int | None = None
+    wet_aroma_score: int | None = None
+    acidity_intensity_score: int | None = None
+    sweetness_score: int | None = None
+    bitterness_intensity_score: int | None = None
+    aftertaste_score: int | None = None
+    overall_preference_score: int
+    flavor_notes: list[str] = []
+    free_notes: str | None = None
+
+
+class DimensionSummary(BaseModel):
+    label: str
+    average: float | None = None
+    valid_count: int = 0
+
+
+class FlavorFrequency(BaseModel):
+    name: str
+    count: int
+
+
+class EvaluationResponse(BaseModel):
+    id: str
+    questionnaire_id: str
+    evaluator_name: str | None = None
+    evaluator_type: str | None = None
+    brew_method: str | None = None
+    drink_temperature: str | None = None
+    drink_form: str | None = None
+    dry_fragrance_score: int | None = None
+    wet_aroma_score: int | None = None
+    acidity_intensity_score: int | None = None
+    sweetness_score: int | None = None
+    bitterness_intensity_score: int | None = None
+    aftertaste_score: int | None = None
+    overall_preference_score: int | None = None
+    flavor_notes: list[str] = []
+    free_notes: str | None = None
+    bean_age_days: int | None = None
+    submitted_at: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class EvaluationStatsResponse(BaseModel):
+    dimensions: list[DimensionSummary]
+    top_flavors: list[FlavorFrequency] = []
+    total_submissions: int = 0
+
+
+# ============================================================
+# Reviews
+# ============================================================
+class ReminderResponse(BaseModel):
+    id: str
+    priority: int
+    content: str
+
+
+class ReviewOverviewResponse(BaseModel):
+    batch: dict | None = None
+    review: dict | None = None
+    reminders: list[ReminderResponse] = []
+    evaluation_summary: str | None = None
+    evaluations: list[dict] = []
+    questionnaires: list[dict] = []
+
+
+class PersonalReviewUpdateRequest(BaseModel):
+    personal_review: str
+
+
+class ComprehensiveReviewUpdateRequest(BaseModel):
+    comprehensive_review: str
+
+
+class SuggestionUpdateRequest(BaseModel):
+    next_batch_suggestion: str
+
+
+class RemindersPutRequest(BaseModel):
+    reminders: list[dict]
+
+
+class NextRoastPlanRequest(BaseModel):
+    planned_at: str
+    purchase_batch_id: str
+    planned_input_weight_grams: int
+    target_description: str | None = None
+    review_reminder_ids: list[str] = []
+
+
+class NextRoastPlanResponse(BaseModel):
+    roasting_batch: RoastingBatchResponse
+    copied_reminders: int
+
+
+# ============================================================
+# Dashboard
+# ============================================================
+class PendingGroupResponse(BaseModel):
+    bean_id: str
+    bean_name: str
+    variety: str | None = None
+    process: str | None = None
+    region: str | None = None
+    batch_count: int
+    batches: list[dict]
+
+
+class DashboardResponse(BaseModel):
+    year: int
+    total_completed_roasts: int
+    total_roasted_bean_profiles: int
+    total_input_weight_grams: int
+    average_weight_loss_percent: float | None = None
+    monthly_roasts: list[dict]
+    variety_distribution: list[dict]
+    region_distribution: list[dict]
+    pending_groups: list[PendingGroupResponse]
+    recent_batches: list[dict]
+    pending_actions: dict
