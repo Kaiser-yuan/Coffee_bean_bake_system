@@ -127,20 +127,76 @@ export interface RoastingBatch {
   colorTag?: string // hex color for consistent identification
 }
 
+export type CurveAlignBy =
+  | 'charge'
+  | 'yellowing'
+  | 'first_crack_start'
+  | 'drop'
+
 export interface CurvePoint {
-  time: number // seconds from charge
+  /** 采样序号 */
+  sampleIndex: number
+  /** 经过时间（秒），从入豆开始 */
+  elapsedSeconds: number
+  /** 豆温 BT (°C) */
+  beanTempCelsius?: number
+  /** 环境温度 ET (°C) */
+  environmentTempCelsius?: number
+  /** 升温率 RoR (°C/分钟) */
+  rorCelsiusPerMinute?: number
+  /** 目标温度 SV (°C) */
+  targetTempCelsius?: number
+  /** 火力模式 */
+  heatingPowerMode?: string
+  /** 火力百分比 */
+  heatingPowerPercent?: number
+  /** 风门百分比 */
+  smokeDamperPercent?: number
+  /** 滚筒转速百分比 */
+  rollerPercent?: number
+  /** 电源状态 */
+  powerStatus?: string
+}
+
+// Backward compatibility aliases
+export interface CurvePointCompat {
+  time: number
   beanTemp?: number
   envTemp?: number
   ror?: number
-  gas?: number // 火力
-  airflow?: number // 风门
-  drumSpeed?: number // 搅拌/转速
+  gas?: number
+  airflow?: number
+  drumSpeed?: number
 }
 
 export interface CurveEvent {
   time: number
-  type: 'charge' | 'tp' | 'turning' | 'fc_start' | 'fc_end' | 'sc_start' | 'drop'
+  type: 'charge' | 'turning_point' | 'yellowing' | 'first_crack_start' | 'first_crack_end' | 'second_crack_start' | 'second_crack_end' | 'drop'
   label: string
+  /** 事件发生时的豆温 */
+  beanTemp?: number
+}
+
+export interface CurveComparisonPoint extends CurvePoint {
+  /** 对齐后时间（秒），由后端或图表适配层计算 */
+  alignedSeconds: number
+}
+
+export interface CurveMetricDifference {
+  metric: string
+  baseValue?: number
+  comparisonValue?: number
+  difference?: number
+  unit?: string
+  calculationRule?: string
+  label?: string
+}
+
+export interface CurveComparisonWarning {
+  code: string
+  severity: 'info' | 'warning'
+  batchId: string
+  message: string
 }
 
 export interface RoastingCurve {
@@ -209,6 +265,10 @@ export interface Reminder {
   priority: 1 | 2 | 3
   content: string
   carriedToBatchId?: string
+  /** 提醒来源追溯 */
+  sourceReviewId?: string
+  sourceRoastingBatchId?: string
+  targetRoastingBatchId?: string
 }
 
 export interface StandardTerm {

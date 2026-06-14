@@ -23,6 +23,7 @@
           <option value="">全部状态</option>
           <option value="planned">待烘</option>
           <option value="completed">已完成</option>
+          <option value="voided">已作废</option>
         </select>
         <button class="btn btn-secondary btn-sm" @click="toggleMoreFilters">
           更多筛选
@@ -38,6 +39,14 @@
           <option value="">曲线不限</option>
           <option value="true">有曲线</option>
           <option value="false">无曲线</option>
+        </select>
+        <select v-model="filters.dataCompleteness" class="select select-sm">
+          <option value="">资料完整度不限</option>
+          <option value="missingWeightOut">缺出豆量</option>
+          <option value="missingCSV">缺CSV</option>
+          <option value="missingEvaluation">缺评价</option>
+          <option value="missingReview">缺复盘</option>
+          <option value="complete">资料完整</option>
         </select>
       </div>
     </div>
@@ -66,12 +75,14 @@
         <thead>
           <tr>
             <th class="col-check"></th>
+            <th>批次号</th>
             <th>烘焙时间</th>
             <th>生豆名称</th>
             <th class="num">投豆量</th>
             <th class="num">失重率</th>
-            <th class="num">总时长</th>
-            <th>状态</th>
+            <th>业务状态</th>
+            <th>资料完整度</th>
+            <th class="col-op">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -92,6 +103,9 @@
             </td>
             <td>
               <span class="color-dot" :style="{ background: b.colorTag }"></span>
+              <span class="batch-id-link">{{ b.id.replace('rb_', 'RB-') }}</span>
+            </td>
+            <td>
               <span class="num">{{ b.actualDate || b.plannedDate }}</span>
             </td>
             <td>
@@ -102,12 +116,27 @@
             </td>
             <td class="num">{{ b.beanWeightIn }}g</td>
             <td class="num">{{ b.weightLossRate ? b.weightLossRate.toFixed(1) + '%' : '-' }}</td>
-            <td class="num">{{ b.totalTime ? formatTime(b.totalTime) : '-' }}</td>
             <td @click.stop>
-              <div class="status-dots">
-                <span class="status-dot" :class="b.curveStatus === 'parsed' ? 'success' : 'neutral'" title="曲线状态">C</span>
-                <span class="status-dot" :class="b.evaluationStatus === 'open' ? 'info' : b.evaluationStatus === 'closed' ? 'neutral' : 'neutral'" title="评价状态">E</span>
-                <span class="status-dot" :class="b.reviewStatus === 'done' ? 'success' : b.reviewStatus === 'draft' ? 'warning' : 'neutral'" title="复盘状态">R</span>
+              <span class="status-tag" :class="b.status">{{ BATCH_STATUS_LABELS[b.status] }}</span>
+            </td>
+            <td @click.stop>
+              <span class="data-completeness">
+                <span v-if="getDataCompleteness(b).isComplete" class="completeness-badge complete">资料完整</span>
+                <template v-else>
+                  <span v-if="getDataCompleteness(b).missingWeightOut" class="completeness-badge missing">缺出豆量</span>
+                  <span v-if="getDataCompleteness(b).missingCSV" class="completeness-badge missing">缺CSV</span>
+                  <span v-if="getDataCompleteness(b).missingEvaluation" class="completeness-badge missing">缺评价</span>
+                  <span v-if="getDataCompleteness(b).missingReview" class="completeness-badge missing">缺复盘</span>
+                </template>
+              </span>
+            </td>
+            <td @click.stop>
+              <div class="action-group">
+                <button
+                  class="btn btn-xs btn-secondary"
+                  @click="openBatchActions(b)"
+                  title="操作"
+                >···</button>
               </div>
             </td>
           </tr>
@@ -129,7 +158,7 @@
         <div class="modal-body">
           <div class="form-row">
             <label class="form-label">生豆</label>
-            <select v-model="createForm.greenBeanId" class="select">
+            <select v-model="createForm.greenBeanId" class="select" @change="onGreenBeanChange">
               <option v-for="b in mockGreenBeans" :key="b.id" :value="b.id">{{ b.name }}</option>
             </select>
           </div>
@@ -160,6 +189,78 @@
         </div>
       </div>
     </div>
+    <!-- 批次操作弹窗 -->
+    <div v-if="actionModalOpen && actionBatch" class="modal-overlay" @click.self="actionModalOpen = false">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>批次操作 — {{ actionBatch.id.replace('rb_', 'RB-') }}</h3>
+          <button class="modal-close" @click="actionModalOpen = false">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="batch-context">
+            <div class="context-item">
+              <span class="context-label">当前状态</span>
+              <span class="status-tag" :class="actionBatch.status">{{ BATCH_STATUS_LABELS[actionBatch.status] }}</span>
+            </div>
+            <div class="context-item">
+              <span class="context-label" v-if="actionBatch.beanWeightIn">投豆量</span>
+              <span class="context-value num" v-if="actionBatch.beanWeightIn">{{ actionBatch.beanWeightIn }}g</span>
+            </div>
+          </div>
+
+          <!-- 待烘批次操作 -->
+          <template v-if="actionBatch.status === 'planned'">
+            <div class="form-divider">标记完成</div>
+            <p class="text-xs text-tertiary mb-sm">确认烘焙完成后，库存在后端扣减实际投豆量</p>
+            <div class="form-row">
+              <label class="form-label">实际投豆量 (g)</label>
+              <input v-model.number="actionConfirmWeightIn" type="number" class="input" />
+            </div>
+            <div class="form-row">
+              <label class="form-label">实际烘焙日期</label>
+              <input v-model="actionConfirmDate" type="date" class="input" />
+            </div>
+            <div class="form-row">
+              <label class="form-label">烘焙度</label>
+              <select v-model="actionRoastLevel" class="select">
+                <option value="">选择烘焙度</option>
+                <option v-for="r in ROAST_LEVELS" :key="r" :value="r">{{ r }}</option>
+              </select>
+            </div>
+            <div class="action-buttons">
+              <button class="btn btn-primary" @click="doMarkComplete">确认完成</button>
+              <button class="btn btn-danger btn-sm" @click="doVoidBatch">作废计划</button>
+            </div>
+          </template>
+
+          <!-- 已完成批次操作 -->
+          <template v-if="actionBatch.status === 'completed'">
+            <div class="form-divider">补录出豆量</div>
+            <div class="form-row">
+              <label class="form-label">出豆量 (g)</label>
+              <div class="form-row-inline">
+                <input v-model.number="actionWeightOut" type="number" class="input" placeholder="出豆量 (g)" />
+                <button class="btn btn-xs btn-primary" @click="doUpdateWeightOut">确认补录</button>
+              </div>
+            </div>
+            <div class="action-buttons">
+              <button class="btn btn-secondary btn-sm" @click="goToCurve(actionBatch.id)">查看曲线</button>
+              <button class="btn btn-secondary btn-sm" @click="$router.push(`/review/${actionBatch.id}`)">批次复盘</button>
+              <button class="btn btn-warning btn-sm" @click="doCancelComplete">取消完成状态</button>
+              <button class="btn btn-danger btn-sm" @click="doVoidBatch">作废批次</button>
+            </div>
+          </template>
+
+          <!-- 已作废批次操作 -->
+          <template v-if="actionBatch.status === 'voided'">
+            <p class="text-sm text-tertiary">已作废批次仅可查看历史信息，不进入库存和统计。</p>
+            <div class="action-buttons">
+              <button class="btn btn-secondary btn-sm" @click="goToCurve(actionBatch.id)">查看历史信息</button>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -167,9 +268,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useRoastingStore } from '../stores/roasting'
-import { mockGreenBeans, mockPurchaseBatches, apiCreateRoastingBatch, getGreenBeanByBatch } from '../mock'
+import { mockGreenBeans, mockPurchaseBatches, apiCreateRoastingBatch, apiCompleteBatch, apiUpdateWeightOut, mockRoastingBatches, getGreenBeanByBatch } from '../mock'
+import type { RoastingBatch, BatchDataCompleteness } from '../types'
 import {
-  BEAN_PROCESSES, VARIETY_OPTIONS, REGION_OPTIONS,
+  BEAN_PROCESSES, VARIETY_OPTIONS, REGION_OPTIONS, ROAST_LEVELS,
   BATCH_STATUS_LABELS,
 } from '../types'
 import LoadingState from '../components/common/LoadingState.vue'
@@ -190,6 +292,7 @@ const filters = ref({
   region: '',
   status: '' as string,
   hasCurve: '' as string,
+  dataCompleteness: '' as string,
 })
 
 const createForm = ref({
@@ -201,6 +304,7 @@ const createForm = ref({
 })
 
 const availablePurchaseBatches = computed(() => {
+  if (!createForm.value.greenBeanId) return []
   return mockPurchaseBatches.filter(p => p.greenBeanId === createForm.value.greenBeanId)
 })
 
@@ -215,6 +319,74 @@ function getBeanMeta(batchId: string) {
   if (!b) return ''
   const gb = b ? getGreenBeanByBatch(b) : undefined
   return gb ? `${gb.variety} · ${gb.process} · ${gb.region}` : ''
+}
+
+function getDataCompleteness(b: RoastingBatch): BatchDataCompleteness {
+  return {
+    missingWeightOut: b.status === 'completed' && !b.beanWeightOut,
+    missingCSV: b.curveStatus === 'none' || b.curveStatus === 'error',
+    missingEvaluation: b.evaluationStatus === 'none',
+    missingReview: b.reviewStatus === 'none' || b.reviewStatus === 'draft',
+    isComplete: !!b.beanWeightOut && b.curveStatus === 'parsed' && b.evaluationStatus !== 'none' && b.reviewStatus === 'done',
+  }
+}
+
+// Batch actions modal
+const actionBatch = ref<RoastingBatch | null>(null)
+const actionModalOpen = ref(false)
+const actionConfirmWeightIn = ref(500)
+const actionConfirmDate = ref(new Date().toISOString().split('T')[0])
+const actionWeightOut = ref(0)
+const actionRoastLevel = ref('')
+
+function openBatchActions(b: RoastingBatch) {
+  actionBatch.value = b
+  actionConfirmWeightIn.value = b.beanWeightIn
+  actionConfirmDate.value = new Date().toISOString().split('T')[0]
+  actionWeightOut.value = b.beanWeightOut || 0
+  actionRoastLevel.value = b.roastLevel || ''
+  actionModalOpen.value = true
+}
+
+async function doMarkComplete() {
+  if (!actionBatch.value) return
+  await apiCompleteBatch(actionBatch.value.id, actionConfirmWeightIn.value, actionConfirmDate.value)
+  // Also set roast level if provided
+  const b = mockRoastingBatches.find(b => b.id === actionBatch.value?.id)
+  if (b && actionRoastLevel.value) b.roastLevel = actionRoastLevel.value as any
+  actionModalOpen.value = false
+  await fetchBatches()
+}
+
+async function doCancelComplete() {
+  if (!actionBatch.value) return
+  const b = mockRoastingBatches.find(b => b.id === actionBatch.value?.id)
+  if (b) {
+    b.status = 'planned'
+    b.actualDate = undefined
+    b.beanWeightOut = undefined
+    b.weightLossRate = undefined
+    b.totalTime = undefined
+  }
+  actionModalOpen.value = false
+  await fetchBatches()
+}
+
+async function doVoidBatch() {
+  if (!actionBatch.value) return
+  const b = mockRoastingBatches.find(b => b.id === actionBatch.value?.id)
+  if (b) {
+    b.status = 'voided'
+  }
+  actionModalOpen.value = false
+  await fetchBatches()
+}
+
+async function doUpdateWeightOut() {
+  if (!actionBatch.value || actionWeightOut.value <= 0) return
+  await apiUpdateWeightOut(actionBatch.value.id, actionWeightOut.value)
+  actionModalOpen.value = false
+  await fetchBatches()
 }
 
 const filteredBatches = computed(() => {
@@ -242,6 +414,11 @@ const filteredBatches = computed(() => {
   if (f.status) list = list.filter(b => b.status === f.status)
   if (f.hasCurve === 'true') list = list.filter(b => b.curveStatus === 'parsed')
   if (f.hasCurve === 'false') list = list.filter(b => b.curveStatus === 'none')
+  if (f.dataCompleteness === 'complete') list = list.filter(b => getDataCompleteness(b).isComplete)
+  if (f.dataCompleteness === 'missingWeightOut') list = list.filter(b => getDataCompleteness(b).missingWeightOut)
+  if (f.dataCompleteness === 'missingCSV') list = list.filter(b => getDataCompleteness(b).missingCSV)
+  if (f.dataCompleteness === 'missingEvaluation') list = list.filter(b => getDataCompleteness(b).missingEvaluation)
+  if (f.dataCompleteness === 'missingReview') list = list.filter(b => getDataCompleteness(b).missingReview)
   return list
 })
 
@@ -251,11 +428,6 @@ function formatWeight(g: number) {
   return g >= 1000 ? (g / 1000).toFixed(1) + 'kg' : g + 'g'
 }
 
-function formatTime(s: number) {
-  const m = Math.floor(s / 60)
-  const sec = s % 60
-  return `${m}:${sec.toString().padStart(2, '0')}`
-}
 
 function goToCurve(batchId: string) { router.push(`/curve/${batchId}`) }
 
@@ -265,7 +437,7 @@ function goToCompare() {
 }
 
 function clearFilters() {
-  filters.value = { greenBeanName: '', variety: '', process: '', region: '', status: '', hasCurve: '' }
+  filters.value = { greenBeanName: '', variety: '', process: '', region: '', status: '', hasCurve: '', dataCompleteness: '' }
   showMoreFilters.value = false
 }
 
@@ -274,7 +446,35 @@ function openCreateDialog() {
   createOpen.value = true
 }
 
+function onGreenBeanChange() {
+  // Reset purchaseBatchId when green bean changes
+  createForm.value.purchaseBatchId = ''
+  const batches = mockPurchaseBatches.filter(p => p.greenBeanId === createForm.value.greenBeanId)
+  if (batches.length > 0) {
+    createForm.value.purchaseBatchId = batches[0].id
+  }
+}
+
 async function onCreate() {
+  // Validation
+  if (!createForm.value.purchaseBatchId) {
+    alert('必须选择采购批次')
+    return
+  }
+  if (createForm.value.beanWeightIn <= 0) {
+    alert('投豆量必须大于零')
+    return
+  }
+  const pb = mockPurchaseBatches.find(p => p.id === createForm.value.purchaseBatchId)
+  if (pb && createForm.value.beanWeightIn > pb.remainingStock) {
+    alert(`投豆量 (${createForm.value.beanWeightIn}g) 超过采购批次可用库存 (${pb.remainingStock}g)`)
+    return
+  }
+  if (!createForm.value.plannedDate) {
+    alert('计划日期不能为空')
+    return
+  }
+
   await apiCreateRoastingBatch({
     purchaseBatchId: createForm.value.purchaseBatchId,
     plannedDate: createForm.value.plannedDate,
@@ -431,6 +631,89 @@ onMounted(fetchBatches)
   color: var(--text-tertiary);
 }
 
+.batch-id-link {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-secondary);
+}
+
+/* Data completeness */
+.data-completeness {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.completeness-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.completeness-badge.complete {
+  background: var(--success-subtle);
+  color: var(--success);
+}
+
+.completeness-badge.missing {
+  background: var(--warning-subtle);
+  color: var(--warning);
+}
+
+.col-op { width: 60px; text-align: right; }
+
+/* Action buttons */
+.action-group {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+/* Batch context */
+.batch-context {
+  background: var(--app-bg);
+  border-radius: var(--radius-md);
+  padding: var(--sp-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.context-item {
+  display: flex;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  align-items: center;
+}
+
+.context-label { color: var(--text-tertiary); min-width: 64px; }
+.context-value { font-weight: 500; }
+
+.form-divider {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border-default);
+}
+
+.action-buttons {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  padding-top: var(--sp-3);
+}
+
+.form-row-inline {
+  display: flex;
+  gap: var(--sp-1);
+}
+
+.mb-sm { margin-bottom: var(--sp-2); }
+
 /* Buttons */
 .btn {
   height: var(--btn-height);
@@ -453,6 +736,10 @@ onMounted(fetchBatches)
 .btn-secondary:hover { background: var(--app-bg); }
 .btn-accent { background: var(--business-accent); color: #fff; border-color: var(--business-accent); }
 .btn-accent:hover { opacity: 0.9; }
+.btn-danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+.btn-danger:hover { opacity: 0.9; }
+.btn-warning { background: var(--warning); color: #fff; border-color: var(--warning); }
+.btn-warning:hover { opacity: 0.9; }
 .btn-text { background: transparent; color: var(--text-secondary); border-color: transparent; }
 .btn-text:hover { color: var(--text-primary); background: var(--app-bg); }
 

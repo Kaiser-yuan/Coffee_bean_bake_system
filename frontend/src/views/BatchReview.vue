@@ -177,12 +177,60 @@
             <button
               v-if="batch"
               class="btn btn-primary btn-full"
-              @click="createNextBatch"
+              @click="openNextBatchDialog"
             >
               创建下一次待烘计划
             </button>
           </div>
         </aside>
+      </div>
+
+      <!-- 创建下一锅确认弹窗 -->
+      <div v-if="nextBatchDialog" class="modal-overlay" @click.self="nextBatchDialog = false">
+        <div class="modal">
+          <div class="modal-header">
+            <h3>创建下一次待烘计划</h3>
+            <button class="modal-close" @click="nextBatchDialog = false">✕</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-row">
+              <label class="form-label">采购批次</label>
+              <span class="text-sm font-medium">{{ getPurchaseLabel }}</span>
+            </div>
+            <div class="form-row">
+              <label class="form-label">计划日期</label>
+              <input v-model="nextBatchForm.plannedDate" type="date" class="input" />
+            </div>
+            <div class="form-row">
+              <label class="form-label">计划投豆量 (g)</label>
+              <input v-model.number="nextBatchForm.beanWeightIn" type="number" class="input" />
+            </div>
+            <div class="form-row">
+              <label class="form-label">下一锅目标</label>
+              <textarea v-model="nextBatchForm.targetDescription" class="textarea-sm" rows="2" placeholder="下一锅调整目标…"></textarea>
+            </div>
+
+            <!-- 提醒携带 -->
+            <div class="form-divider" v-if="review.reminders.length">
+              需要携带的提醒（默认全部勾选）
+            </div>
+            <div v-for="rem in review.reminders" :key="rem.id" class="reminder-carry-item">
+              <label class="checkbox-row">
+                <input type="checkbox" v-model="nextBatchForm.selectedReminders" :value="rem.id" />
+                <span class="reminder-carry-priority">#{{ rem.priority }}</span>
+                <span class="text-sm">{{ rem.content }}</span>
+              </label>
+            </div>
+
+            <p class="text-xs text-tertiary mt-sm">
+              选择的提醒将作为快照复制到下一锅，不会随本次复盘修改而变化。
+            </p>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-secondary" @click="nextBatchDialog = false">取消</button>
+            <button class="btn btn-primary" @click="doCreateNextBatch">创建</button>
+          </div>
+        </div>
       </div>
     </template>
   </div>
@@ -192,7 +240,7 @@
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  mockRoastingBatches, mockReviews, mockQuestionnaires,
+  mockRoastingBatches, mockReviews, mockQuestionnaires, mockPurchaseBatches,
   getGreenBeanByBatch,
   apiSaveReview, apiCreateQuestionnaire, apiCloseQuestionnaire,
   apiCreateRoastingBatch, apiUpdateWeightOut,
@@ -221,6 +269,17 @@ const evaluationSummary = ref('')
 const showWeightOutInput = ref(false)
 const weightOutValue = ref(0)
 
+// Next batch dialog
+const nextBatchDialog = ref(false)
+const nextBatchForm = ref({
+  plannedDate: new Date().toISOString().split('T')[0],
+  beanWeightIn: 500,
+  targetDescription: '',
+  selectedReminders: [] as string[],
+})
+
+const getPurchaseLabel = ref('')
+
 const getBeanName = ref('')
 
 function formatTime(s: number) {
@@ -237,6 +296,8 @@ async function fetchReview() {
 
     if (batch.value) {
       getBeanName.value = getGreenBeanByBatch(batch.value)?.name || ''
+      const pb = mockPurchaseBatches.find(p => p.id === batch.value!.purchaseBatchId)
+      getPurchaseLabel.value = pb ? `PB-${pb.id.replace('pb_', '')}` : '-'
     }
 
     // 问卷不依赖曲线或复盘存在
@@ -324,15 +385,48 @@ async function closeQuestionnaire() {
   await fetchReview()
 }
 
-async function createNextBatch() {
+function openNextBatchDialog() {
   if (!batch.value) return
-  await apiCreateRoastingBatch({
-    purchaseBatchId: batch.value.purchaseBatchId,
+  nextBatchForm.value = {
+    plannedDate: new Date().toISOString().split('T')[0],
     beanWeightIn: batch.value.beanWeightIn,
-    targetDescription: review.value.nextBatchSuggestions,
+    targetDescription: review.value.nextBatchSuggestions || '',
+    selectedReminders: review.value.reminders.map(r => r.id),
+  }
+  nextBatchDialog.value = true
+}
+
+async function doCreateNextBatch() {
+  if (!batch.value) return
+  const newBatch = await apiCreateRoastingBatch({
+    purchaseBatchId: batch.value.purchaseBatchId,
+    plannedDate: nextBatchForm.value.plannedDate,
+    beanWeightIn: nextBatchForm.value.beanWeightIn,
+    targetDescription: nextBatchForm.value.targetDescription,
+    status: 'planned',
   })
+
+  // Calculate bean age days for reference
+  if (batch.value.actualDate) {
+    const bakeDate = new Date(batch.value.actualDate)
+    const today = new Date()
+    Math.floor((today.getTime() - bakeDate.getTime()) / (1000 * 60 * 60 * 24))
+    // bean age is auto-calculated, stored in evaluation
+  }
+
+  // Copy selected reminders as snapshots
+  const selectedRems = review.value.reminders.filter(r => nextBatchForm.value.selectedReminders.includes(r.id))
+  selectedRems.forEach(r => {
+    r.carriedToBatchId = newBatch.id
+    r.sourceReviewId = review.value.id
+    r.sourceRoastingBatchId = batch.value!.id
+    r.targetRoastingBatchId = newBatch.id
+  })
+
+  nextBatchDialog.value = false
   router.push('/roasting')
 }
+
 
 onMounted(fetchReview)
 </script>
@@ -543,4 +637,28 @@ onMounted(fetchReview)
 .input:focus { border-color: var(--primary); }
 
 .flex-1 { flex: 1; }
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  cursor: pointer;
+  font-size: var(--fs-sm);
+}
+
+.reminder-carry-priority {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--primary-subtle);
+  color: var(--primary);
+  font-weight: 600;
+  font-size: var(--fs-xs);
+  flex-shrink: 0;
+}
+
+.mt-sm { margin-top: var(--sp-2); }
 </style>

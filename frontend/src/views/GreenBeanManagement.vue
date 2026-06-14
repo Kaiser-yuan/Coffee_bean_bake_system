@@ -306,7 +306,7 @@ import {
   BEAN_PROCESSES, VARIETY_OPTIONS, REGION_OPTIONS,
   BATCH_STATUS_LABELS,
 } from '../types'
-import type { GreenBean, PurchaseBatch } from '../types'
+import type { GreenBean, PurchaseBatch, BeanProcess } from '../types'
 import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
 import EmptyState from '../components/common/EmptyState.vue'
@@ -325,7 +325,7 @@ const selectedBeanId = ref('')
 const form = ref({
   name: '',
   variety: '铁皮卡',
-  process: '水洗' as const,
+  process: '水洗' as BeanProcess,
   region: '埃塞俄比亚',
   brand: '',
   season: '',
@@ -440,7 +440,7 @@ function resetForm() {
   form.value = {
     name: '',
     variety: '铁皮卡',
-    process: '水洗',
+    process: '水洗' as BeanProcess,
     region: '埃塞俄比亚',
     brand: '',
     season: '',
@@ -532,6 +532,21 @@ function openRoastPlan(pb: PurchaseBatch) {
 
 async function onCreateRoastPlan() {
   if (!selectedPbForPlan.value || !selectedBeanForPlan.value) return
+
+  // Validation
+  if (roastForm.value.beanWeightIn <= 0) {
+    alert('投豆量必须大于零')
+    return
+  }
+  if (!roastForm.value.plannedDate) {
+    alert('计划日期不能为空')
+    return
+  }
+  if (roastForm.value.beanWeightIn > selectedPbForPlan.value.remainingStock) {
+    alert(`投豆量 (${roastForm.value.beanWeightIn}g) 超过采购批次可用库存 (${selectedPbForPlan.value.remainingStock}g)`)
+    return
+  }
+
   await apiCreateRoastingBatch({
     purchaseBatchId: selectedPbForPlan.value.id,
     plannedDate: roastForm.value.plannedDate,

@@ -15,7 +15,24 @@
       "Bash(cmd.exe /c start http://localhost:5173/)",
       "Bash(curl -s http://localhost:5173/)",
       "WebFetch(domain:localhost)",
-      "Bash(curl -s http://localhost:5173)"
+      "Bash(curl -s http://localhost:5173)",
+      "Bash(git rm *)",
+      "Bash(git commit -m 'v0.2.0: UI redesign + data model fixes *)",
+      "Bash(git config *)",
+      "Bash(git remote *)",
+      "Bash(git push *)",
+      "Read(//c/Users/Kaiser/**)",
+      "Read(//c/Users/Kaiser/.ssh/**)",
+      "Bash(curl -sI \"https://kaiser-yuan.github.io/Coffee_bean_bake_system/assets/index-CVIxBAVF.css\")",
+      "Bash(curl -v \"https://kaiser-yuan.github.io/Coffee_bean_bake_system/\")",
+      "Bash(curl *)",
+      "WebFetch(domain:kaiser-yuan.github.io)",
+      "Bash(taskkill //F //IM node.exe)",
+      "Bash(npm run *)",
+      "Bash(python -c ' *)",
+      "Bash(rm -rf docs/assets docs/*.svg docs/index.html)",
+      "Bash(cp -r frontend/dist/* docs/)",
+      "Bash(git add *)"
     ]
   }
 }

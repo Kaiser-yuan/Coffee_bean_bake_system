@@ -179,7 +179,10 @@ const computedDimensions = computed(() => {
   })
 })
 
-const shareUrl = computed(() => `${window.location.origin}/eval/${questionnaire.value?.shareCode || ''}`)
+const shareUrl = computed(() => {
+  const base = window.location.origin + (window.location.pathname || '')
+  return `${base}#/eval/${questionnaire.value?.shareCode || ''}`
+})
 
 const getBeanNameForDetail = computed(() => {
   if (!questionnaire.value) return '-'

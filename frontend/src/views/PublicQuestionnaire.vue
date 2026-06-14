@@ -33,16 +33,16 @@
               :key="n"
               type="button"
               class="star-btn"
-              :class="{ active: form[dim.key] >= n }"
-              @click="form[dim.key] = form[dim.key] === n ? 0 : n"
+              :class="{ active: (form as any)[dim.key] >= n }"
+              @click="(form as any)[dim.key] = (form as any)[dim.key] === n ? 0 : n"
             >
-              {{ form[dim.key] >= n ? '★' : '☆' }}
+              {{ (form as any)[dim.key] >= n ? '★' : '☆' }}
             </button>
             <button
               type="button"
               class="skip-btn"
-              :class="{ active: form[dim.key] === 0 }"
-              @click="form[dim.key] = 0"
+              :class="{ active: (form as any)[dim.key] === 0 }"
+              @click="(form as any)[dim.key] = 0"
             >
               不确定
             </button>
@@ -246,10 +246,33 @@ async function fetchQ() {
 async function onSubmit() {
   if (!isValid.value || !questionnaire.value) return
   try {
+    // Calculate bean age days from roast date
+    let beanAgeDays: number | undefined
+    const batch = mockRoastingBatches.find(b => b.id === questionnaire.value!.roastingBatchId)
+    if (batch?.actualDate) {
+      const bakeDate = new Date(batch.actualDate)
+      const today = new Date()
+      beanAgeDays = Math.floor((today.getTime() - bakeDate.getTime()) / (1000 * 60 * 60 * 24))
+    }
+
     await apiSubmitEvaluation({
       questionnaireId: questionnaire.value.id,
       roastingBatchId: questionnaire.value.roastingBatchId,
-      ...form,
+      dryFragrance: form.dryFragrance,
+      wetAroma: form.wetAroma,
+      acidity: form.acidity,
+      sweetness: form.sweetness,
+      bitterness: form.bitterness,
+      aftertaste: form.aftertaste,
+      overallPreference: form.overallPreference,
+      brewMethod: form.brewMethod as any,
+      drinkTemperature: form.drinkTemperature as any,
+      drinkForm: form.drinkForm as any,
+      flavorNotes: form.flavorNotes,
+      freeNotes: form.freeNotes,
+      evaluatorName: form.evaluatorName,
+      evaluatorType: form.evaluatorType,
+      beanAgeDays,
       submittedAt: new Date().toISOString().split('T')[0],
     })
     submitted.value = true

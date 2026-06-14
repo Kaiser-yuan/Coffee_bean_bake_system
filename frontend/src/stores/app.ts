@@ -1,7 +1,5 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { GreenBean, RoastingBatch } from '../types'
-import * as api from '../mock'
 
 export const useAppStore = defineStore('app', () => {
   const currentYear = ref(new Date().getFullYear())

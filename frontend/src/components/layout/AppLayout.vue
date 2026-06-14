@@ -37,7 +37,7 @@
       </div>
 
       <div class="sidebar-footer">
-        <span class="text-xs text-tertiary">v0.2.0 · Mock</span>
+        <span class="text-xs text-tertiary">v0.2.0 · 演示环境</span>
       </div>
     </aside>
 
@@ -55,6 +55,7 @@
           <span class="page-title">{{ $route.meta.title || '' }}</span>
         </div>
         <div class="topbar-right">
+          <span class="demo-badge" title="当前数据为模拟数据，刷新页面后不会保存">演示环境</span>
           <span class="text-sm text-secondary">烘焙师</span>
         </div>
       </header>
@@ -248,6 +249,17 @@ const mainNavItems = [
   display: flex;
   align-items: center;
   gap: var(--sp-3);
+}
+
+.demo-badge {
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  padding: 2px 10px;
+  border-radius: 10px;
+  background: var(--warning-subtle);
+  color: var(--warning);
+  border: 1px solid var(--warning);
+  white-space: nowrap;
 }
 
 .content {

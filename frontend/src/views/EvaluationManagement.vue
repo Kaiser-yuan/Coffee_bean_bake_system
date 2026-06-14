@@ -126,9 +126,10 @@ async function closeQ(id: string) {
 }
 
 function copyLink(q: Questionnaire) {
-  const url = `${window.location.origin}/eval/${q.shareCode}`
+  const base = window.location.origin + (window.location.pathname || '')
+  const url = `${base}#/eval/${q.shareCode}`
   navigator.clipboard.writeText(url).then(() => {
-    alert('已复制问卷链接')
+    alert('已在当前演示会话中保存（演示环境：刷新后数据不保存）')
   })
 }
 

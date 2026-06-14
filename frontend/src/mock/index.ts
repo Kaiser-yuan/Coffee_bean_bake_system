@@ -151,7 +151,7 @@ function generateCurvePoints(duration: number): import('../types').CurvePoint[] 
 
   let bt = chargeTemp
   for (let t = 0; t <= duration; t += step) {
-    const p: import('../types').CurvePoint = { time: t }
+    const p: import('../types').CurvePoint = { sampleIndex: t, elapsedSeconds: t }
 
     if (t < tpTime) {
       bt = chargeTemp - (chargeTemp - tpTemp) * (t / tpTime)
@@ -160,22 +160,27 @@ function generateCurvePoints(duration: number): import('../types').CurvePoint[] 
       const targetTemp = randInt(205, 218)
       bt = tpTemp + (targetTemp - tpTemp) * (1 - Math.exp(-3 * progress))
     }
-    p.beanTemp = parseFloat(bt.toFixed(1))
+    p.beanTempCelsius = parseFloat(bt.toFixed(1))
+    p.environmentTempCelsius = parseFloat(((p.beanTempCelsius || 0) + randInt(20, 50)).toFixed(1))
 
-    p.envTemp = parseFloat((p.beanTemp + randInt(20, 50) + (t < 300 ? 10 : 0)).toFixed(1))
+    const rorVal = t < dropTime - 10 ? randFloat(1.5, 8, 1) : 0
+    p.rorCelsiusPerMinute = rorVal
 
-    p.ror = t < dropTime - 10 ? parseFloat(randFloat(1.5, 8, 1).toString()) : 0
+    // HP 火力百分比
+    if (t < tpTime) p.heatingPowerPercent = 80
+    else if (t < fcStart - 60) p.heatingPowerPercent = 70
+    else if (t < fcStart) p.heatingPowerPercent = 60
+    else p.heatingPowerPercent = 50
 
-    if (t < tpTime) p.gas = 80
-    else if (t < fcStart - 60) p.gas = 70
-    else if (t < fcStart) p.gas = 60
-    else p.gas = 50
+    p.heatingPowerMode = 'percent'
 
-    if (t < tpTime) p.airflow = 50
-    else if (t < fcStart) p.airflow = 60
-    else p.airflow = 70
+    // SM 风门百分比
+    if (t < tpTime) p.smokeDamperPercent = 50
+    else if (t < fcStart) p.smokeDamperPercent = 60
+    else p.smokeDamperPercent = 70
 
-    p.drumSpeed = 78
+    // RL 滚筒百分比
+    p.rollerPercent = 78
 
     points.push(p)
   }
@@ -190,10 +195,10 @@ mockRoastingBatches
     const duration = b.totalTime || randInt(540, 900)
     const events: CurveEvent[] = [
       { time: 0, type: 'charge', label: '入豆' },
-      { time: randInt(60, 100), type: 'tp', label: '回温点' },
-      { time: randInt(300, 360), type: 'turning', label: '转换点' },
-      { time: randInt(420, 480), type: 'fc_start', label: '一爆开始' },
-      { time: randInt(500, 560), type: 'fc_end', label: '一爆结束' },
+      { time: randInt(60, 100), type: 'turning_point', label: '回温点' },
+      { time: randInt(300, 360), type: 'yellowing', label: '转黄点' },
+      { time: randInt(420, 480), type: 'first_crack_start', label: '一爆开始' },
+      { time: randInt(500, 560), type: 'first_crack_end', label: '一爆结束' },
       { time: duration, type: 'drop', label: '下豆' },
     ]
 
@@ -325,10 +330,15 @@ export function getDashboardData(year: number): DashboardYearData {
   })
   const completedBatches = yearBatches.filter(b => b.status === 'completed')
 
-  const monthlyRoasts = Array.from({ length: 12 }, (_, i) => ({
-    month: i + 1,
-    count: randInt(i > new Date().getMonth() ? 0 : 2, 15),
-  }))
+  // Monthly roasts — aggregated from real completed batch data
+  const monthlyRoasts = Array.from({ length: 12 }, (_, i) => {
+    const month = i + 1
+    const count = completedBatches.filter(b => {
+      const d = new Date(b.actualDate || b.plannedDate!)
+      return d.getFullYear() === year && (d.getMonth() + 1) === month
+    }).length
+    return { month, count }
+  })
 
   // 豆款数：生豆档案 ID 去重
   const beanProfileIds = new Set<string>()
@@ -423,7 +433,7 @@ async function mockRequest<T>(
   data: T,
   opts?: { empty?: boolean; fail?: boolean }
 ): Promise<T> {
-  await delay(config.delay + Math.random() * 200)
+  await delay(config.delay! + Math.random() * 200)
 
   if (opts?.fail) {
     throw new Error('模拟请求失败')
@@ -443,7 +453,7 @@ export async function apiGetDashboard(year: number): Promise<DashboardYearData> 
   return mockRequest(getDashboardData(year))
 }
 
-export async function apiGetGreenBeans(filter?: Record<string, unknown>): Promise<GreenBean[]> {
+export async function apiGetGreenBeans(_filter?: Record<string, unknown>): Promise<GreenBean[]> {
   return mockRequest([...mockGreenBeans])
 }
 
@@ -454,7 +464,7 @@ export async function apiGetPurchaseBatches(greenBeanId?: string): Promise<Purch
   return mockRequest(list)
 }
 
-export async function apiGetRoastingBatches(filter?: Record<string, unknown>): Promise<{ items: RoastingBatch[]; total: number }> {
+export async function apiGetRoastingBatches(_filter?: Record<string, unknown>): Promise<{ items: RoastingBatch[]; total: number }> {
   const items = [...mockRoastingBatches]
   return mockRequest({ items, total: items.length })
 }
@@ -606,6 +616,8 @@ export async function apiCloseQuestionnaire(id: string): Promise<Questionnaire> 
 export async function apiSubmitEvaluation(data: Partial<CuppingEvaluation>): Promise<CuppingEvaluation> {
   const eval_: CuppingEvaluation = {
     id: uid('eval'),
+    questionnaireId: data.questionnaireId || '',
+    roastingBatchId: data.roastingBatchId || '',
     evaluatorName: data.evaluatorName || '匿名',
     evaluatorType: data.evaluatorType || 'customer',
     brewMethod: data.brewMethod || '手冲',
@@ -621,7 +633,7 @@ export async function apiSubmitEvaluation(data: Partial<CuppingEvaluation>): Pro
     flavorNotes: data.flavorNotes || [],
     submittedAt: new Date().toISOString().split('T')[0],
     ...data,
-  }
+  } as CuppingEvaluation
   mockEvaluations.push(eval_)
   const q = mockQuestionnaires.find(q => q.id === data.questionnaireId)
   if (q) q.submissionCount++

@@ -12,14 +12,24 @@
         </span>
       </div>
       <div class="header-right">
+        <!-- 问卷按钮：只有已完成批次才显示 -->
         <button
-          v-if="!isCompare && currentBatch"
+          v-if="!isCompare && currentBatch && currentBatch.status === 'completed' && !questionnaireCreated"
           class="btn btn-secondary"
           @click="createQuestionnaire"
-          :disabled="questionnaireCreated"
         >
-          {{ questionnaireCreated ? '评价进行中' : '发起评价问卷' }}
+          发起评价问卷
         </button>
+        <button
+          v-if="!isCompare && currentBatch && questionnaireCreated"
+          class="btn btn-secondary"
+          disabled
+        >
+          {{ questionnaireStatusText }}
+        </button>
+        <span v-if="!isCompare && currentBatch && currentBatch.status !== 'completed'" class="text-xs text-tertiary">
+          待批次完成后才可发起问卷
+        </span>
         <button
           v-if="!isCompare && currentBatch"
           class="btn btn-primary"
@@ -59,6 +69,11 @@
         <div class="kpi-item">
           <span class="kpi-label">出豆量</span>
           <span class="kpi-val num">{{ currentBatch.beanWeightOut ? currentBatch.beanWeightOut + 'g' : '未录入' }}</span>
+        </div>
+        <div class="kpi-divider"></div>
+        <div class="kpi-item">
+          <span class="kpi-label">养豆天数</span>
+          <span class="kpi-val num">{{ beanAgeDays > 0 ? beanAgeDays + '天' : '-' }}</span>
         </div>
       </section>
 
@@ -135,8 +150,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { mockCurves, mockRoastingBatches, mockGreenBeans, mockQuestionnaires, getGreenBeanByBatch, apiCreateQuestionnaire } from '../mock'
-import type { RoastingCurve, RoastingBatch } from '../types'
+import { mockCurves, mockRoastingBatches, mockQuestionnaires, getGreenBeanByBatch, apiCreateQuestionnaire } from '../mock'
+import type { RoastingCurve } from '../types'
 import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
 import EmptyState from '../components/common/EmptyState.vue'
@@ -150,15 +165,16 @@ const curves = ref<RoastingCurve[]>([])
 const batchVisible = ref<boolean[]>([])
 const compareMode = ref<'batch' | 'channel'>('batch')
 const questionnaireCreated = ref(false)
+const questionnaireStatusText = ref('')
 
 // 指标通道定义 — 单锅：指标颜色+线型；多锅：批次颜色+指标线型
 const channels = ref([
-  { key: 'beanTemp', label: '豆温', color: '#df5b45', visible: true, lineStyle: 'solid' as const },
-  { key: 'envTemp', label: '环境温', color: '#e5a029', visible: true, lineStyle: 'solid' as const },
-  { key: 'ror', label: 'ROR', color: '#3478d4', visible: true, lineStyle: 'dashed' as const },
-  { key: 'gas', label: '火力', color: '#8b5cc7', visible: true, lineStyle: 'step' as const },
-  { key: 'airflow', label: '风门', color: '#20a184', visible: true, lineStyle: 'step' as const },
-  { key: 'drumSpeed', label: '搅拌', color: '#718096', visible: true, lineStyle: 'step' as const },
+  { key: 'beanTempCelsius', label: '豆温 BT', color: '#df5b45', visible: true, lineStyle: 'solid' as const },
+  { key: 'environmentTempCelsius', label: '环境温 ET', color: '#e5a029', visible: true, lineStyle: 'solid' as const },
+  { key: 'rorCelsiusPerMinute', label: 'RoR · 右轴', color: '#3478d4', visible: true, lineStyle: 'dashed' as const },
+  { key: 'heatingPowerPercent', label: '火力 HP', color: '#8b5cc7', visible: true, lineStyle: 'step' as const },
+  { key: 'smokeDamperPercent', label: '风门 SM', color: '#20a184', visible: true, lineStyle: 'step' as const },
+  { key: 'rollerPercent', label: '滚筒 RL', color: '#718096', visible: true, lineStyle: 'step' as const },
 ])
 
 const batchColors = ['#df5b45', '#3478d4', '#1f9d68', '#8b5cc7', '#e5a029', '#d94b4b']
@@ -179,6 +195,13 @@ const currentBatch = computed(() => {
 })
 
 const currentCurve = computed(() => curves.value[0])
+
+const beanAgeDays = computed(() => {
+  if (!currentBatch.value?.actualDate) return 0
+  const bakeDate = new Date(currentBatch.value.actualDate)
+  const today = new Date()
+  return Math.floor((today.getTime() - bakeDate.getTime()) / (1000 * 60 * 60 * 24))
+})
 
 function getBeanName(batchId: string) {
   const batch = mockRoastingBatches.find(b => b.id === batchId)
@@ -239,6 +262,9 @@ async function fetchCurves() {
     if (!isCompare.value && currentBatch.value) {
       const existingQ = mockQuestionnaires.find(q => q.roastingBatchId === currentBatch.value!.id)
       questionnaireCreated.value = !!existingQ
+      if (existingQ) {
+        questionnaireStatusText.value = existingQ.status === 'open' ? '评价进行中' : '评价已关闭'
+      }
     }
 
     await nextTick()
@@ -260,7 +286,6 @@ function renderChart() {
   const visibleChannels = channels.value.filter(c => c.visible)
   const gridLeft = 60
   const gridTop = 10
-  const gridBottom = 30
 
   const builtSeries: any[] = []
 
@@ -269,18 +294,18 @@ function renderChart() {
     visibleChannels.forEach(ch => {
       curves.value.forEach(curve => {
         const points = curve.points
-        const values = points.map(p => [p.time, p[ch.key as keyof typeof p]])
+        const values = points.map(p => [p.elapsedSeconds, p[ch.key as keyof typeof p]])
           .filter(v => v[1] !== undefined && v[1] !== null)
 
-        const isStep = ['gas', 'airflow', 'drumSpeed'].includes(ch.key)
-        const needsSecondaryGrid = ['gas', 'airflow', 'drumSpeed'].includes(ch.key)
+        const isStep = ['heatingPowerPercent', 'smokeDamperPercent', 'rollerPercent'].includes(ch.key)
+        const needsSecondaryGrid = ['heatingPowerPercent', 'smokeDamperPercent', 'rollerPercent'].includes(ch.key)
         const gridIdx = needsSecondaryGrid ? 1 : 0
 
         builtSeries.push({
           name: ch.label,
           type: 'line',
           xAxisIndex: gridIdx,
-          yAxisIndex: needsSecondaryGrid ? 2 : (ch.key === 'ror' ? 1 : 0),
+          yAxisIndex: needsSecondaryGrid ? 2 : (ch.key === 'rorCelsiusPerMinute' ? 1 : 0),
           data: values,
           smooth: false,
           step: isStep ? 'end' : false,
@@ -300,18 +325,18 @@ function renderChart() {
       curves.value.forEach((curve, bi) => {
         if (!batchVisible.value[bi]) return
         const points = curve.points
-        const values = points.map(p => [p.time, p[ch.key as keyof typeof p]])
+        const values = points.map(p => [p.elapsedSeconds, p[ch.key as keyof typeof p]])
           .filter(v => v[1] !== undefined && v[1] !== null)
 
-        const isStep = ['gas', 'airflow', 'drumSpeed'].includes(ch.key)
-        const needsSecondaryGrid = ['gas', 'airflow', 'drumSpeed'].includes(ch.key)
+        const isStep = ['heatingPowerPercent', 'smokeDamperPercent', 'rollerPercent'].includes(ch.key)
+        const needsSecondaryGrid = ['heatingPowerPercent', 'smokeDamperPercent', 'rollerPercent'].includes(ch.key)
         const gridIdx = needsSecondaryGrid ? 1 : 0
 
         builtSeries.push({
           name: `${ch.label}·批次${bi + 1}`,
           type: 'line',
           xAxisIndex: gridIdx,
-          yAxisIndex: needsSecondaryGrid ? 2 : (ch.key === 'ror' ? 1 : 0),
+          yAxisIndex: needsSecondaryGrid ? 2 : (ch.key === 'rorCelsiusPerMinute' ? 1 : 0),
           data: values,
           smooth: false,
           step: isStep ? 'end' : false,
@@ -331,7 +356,7 @@ function renderChart() {
     curves.value.forEach((curve, bi) => {
       if (!batchVisible.value[bi]) return
       const points = curve.points
-      const values = points.map(p => [p.time, p[singleChannel.key as keyof typeof p]])
+      const values = points.map(p => [p.elapsedSeconds, p[singleChannel.key as keyof typeof p]])
         .filter(v => v[1] !== undefined && v[1] !== null)
 
       builtSeries.push({
@@ -400,7 +425,7 @@ function renderChart() {
       },
       {
         gridIndex: 0, type: 'value',
-        name: '°C/30s',
+        name: '°C/分钟',
         nameTextStyle: { fontSize: 10, color: '#3478d4' },
         splitLine: { show: false },
         axisLabel: { fontSize: 10, color: '#3478d4' },

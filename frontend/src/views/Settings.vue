@@ -58,11 +58,42 @@
     <template v-if="activeTab === 'machine'">
       <section class="settings-section">
         <h3 class="section-title">烘焙机配置</h3>
-        <EmptyState icon="⚙" title="烘焙机配置占位" description="等待 M1 面板信息和 CSV 格式确认后配置" />
+        <p class="text-sm text-tertiary mb-md">狙击手 M1 烘焙机</p>
+        <div class="machine-info">
+          <div class="machine-item">
+            <span class="machine-label">品牌 / 型号</span>
+            <span class="machine-value">狙击手 M1</span>
+          </div>
+          <div class="machine-item">
+            <span class="machine-label">电流</span>
+            <span class="machine-value">单相 220V</span>
+          </div>
+          <div class="machine-item">
+            <span class="machine-label">最大烘焙量</span>
+            <span class="machine-value">1.2kg</span>
+          </div>
+        </div>
       </section>
       <section class="settings-section">
-        <h3 class="section-title">CSV 解析配置</h3>
-        <EmptyState icon="📄" title="CSV 配置占位" description="等待 M1 CSV 字段说明后配置解析规则" />
+        <h3 class="section-title">Kaleido M1 CSV 解析规则</h3>
+        <div class="csv-spec">
+          <div class="csv-spec-item">
+            <span class="csv-spec-label">支持文件名</span>
+            <span class="csv-spec-value">日期_顺序号.csv（例：260530_9.csv）</span>
+          </div>
+          <div class="csv-spec-item">
+            <span class="csv-spec-label">解析字段</span>
+            <span class="csv-spec-value">index, time, BT, ET, RoR, SV, HP, HPM, SM, RL, PS</span>
+          </div>
+          <div class="csv-spec-item">
+            <span class="csv-spec-label">阶段标注</span>
+            <span class="csv-spec-value">入豆 - 转黄 - 一爆开始 - 一爆结束 - 出豆</span>
+          </div>
+          <div class="csv-spec-item">
+            <span class="csv-spec-label">参考</span>
+            <span class="csv-spec-value">基于 260530_9.csv 与 260530_10.csv 解析</span>
+          </div>
+        </div>
       </section>
     </template>
 
@@ -78,32 +109,7 @@
     <template v-if="activeTab === 'files'">
       <section class="settings-section">
         <h3 class="section-title">文件与备份</h3>
-        <div class="backup-list">
-          <div class="backup-item">
-            <div class="backup-info">
-              <span class="font-medium">本地 CSV 文件</span>
-              <span class="text-sm text-tertiary">服务器磁盘存储</span>
-            </div>
-            <span class="status-dot success"></span>
-            <span class="text-sm">正常</span>
-          </div>
-          <div class="backup-item">
-            <div class="backup-info">
-              <span class="font-medium">阿里云 OSS 备份</span>
-              <span class="text-sm text-tertiary">自动每日备份</span>
-            </div>
-            <span class="status-dot success"></span>
-            <span class="text-sm">正常 · 最近: 2026-06-10 02:00</span>
-          </div>
-          <div class="backup-item">
-            <div class="backup-info">
-              <span class="font-medium">数据库备份</span>
-              <span class="text-sm text-tertiary">PostgreSQL dump</span>
-            </div>
-            <span class="status-dot success"></span>
-            <span class="text-sm">正常 · 最近: 2026-06-10 02:05</span>
-          </div>
-        </div>
+        <EmptyState icon="🔧" title="未配置" description="真实接口完成前，备份功能暂不可用" />
       </section>
     </template>
   </div>
@@ -306,6 +312,36 @@ function toggleTerm(term: StandardTerm) {
 }
 
 .backup-item:last-child { border-bottom: none; }
+
+.machine-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.machine-item {
+  display: flex;
+  gap: var(--sp-3);
+  font-size: var(--fs-sm);
+}
+
+.machine-label { color: var(--text-tertiary); min-width: 120px; }
+.machine-value { font-weight: 500; }
+
+.csv-spec {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.csv-spec-item {
+  display: flex;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+}
+
+.csv-spec-label { color: var(--text-tertiary); min-width: 100px; flex-shrink: 0; }
+.csv-spec-value { font-family: var(--font-mono); font-size: var(--fs-xs); }
 
 .backup-info {
   flex: 1;
