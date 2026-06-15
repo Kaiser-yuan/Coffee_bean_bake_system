@@ -45,6 +45,20 @@ async def get_current_user(
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
 
 
+# --- Admin User ---
+
+async def get_admin_user(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    """Require admin role."""
+    if not current_user.is_admin:
+        raise ForbiddenException("Admin privileges required")
+    return current_user
+
+
+AdminUserDep = Annotated[User, Depends(get_admin_user)]
+
+
 # --- Idempotency Key ---
 
 async def get_idempotency_key(

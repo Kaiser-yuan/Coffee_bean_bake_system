@@ -1,10 +1,10 @@
 """Public evaluation submission API."""
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
-from sqlalchemy import select
+from fastapi import APIRouter, Request
+from sqlalchemy import select, update
 
-from ..dependencies import DBSessionDep
+from ..dependencies import DBSessionDep, CurrentUserDep
 from ...core.exceptions import (
     NotFoundException, ValidationException,
     QuestionnaireClosedException, QuestionnaireExpiredException,
@@ -26,6 +26,7 @@ async def submit_evaluation(
     share_code: str,
     body: EvaluationSubmitRequest,
     db: DBSessionDep = None,
+    request: Request = None,
 ):
     """Submit a public evaluation (no auth required)."""
     q_repo = QuestionnaireRepository(db)
@@ -39,9 +40,13 @@ async def submit_evaluation(
     if is_expired(q):
         raise QuestionnaireExpiredException()
 
-    # Validate overall_preference_score is required
-    if body.overall_preference_score < 1 or body.overall_preference_score > 5:
-        raise ValidationException("综合喜好评分必须在 1-5 之间")
+    # Resolve brew_method to standard_term
+    brew_method_term_id = None
+    if body.brew_method:
+        from ...repositories.terms import TermRepository
+        term_repo = TermRepository(db)
+        term = await term_repo.get_or_create_value("brew_method", body.brew_method)
+        brew_method_term_id = term.id
 
     # Calculate bean age
     result = await db.execute(
@@ -58,6 +63,7 @@ async def submit_evaluation(
         roasting_batch_id=q.roasting_batch_id,
         evaluator_name=body.evaluator_name,
         evaluator_type=body.evaluator_type,
+        brew_method_term_id=brew_method_term_id,
         drink_temperature=body.drink_temperature,
         drink_form=body.drink_form,
         dry_fragrance_score=body.dry_fragrance_score,
@@ -67,7 +73,7 @@ async def submit_evaluation(
         bitterness_intensity_score=body.bitterness_intensity_score,
         aftertaste_score=body.aftertaste_score,
         overall_preference_score=body.overall_preference_score,
-        flavor_term_ids=body.flavor_notes,  # Store as simple list for now
+        flavor_term_ids=body.flavor_notes,
         free_notes=body.free_notes,
         bean_age_days=bean_age,
         submitted_at=datetime.now(timezone.utc),
@@ -75,8 +81,12 @@ async def submit_evaluation(
     db.add(eval_)
     await db.flush()
 
-    # Increment submission count
-    q.submission_count += 1
+    # Atomically increment submission count
+    await db.execute(
+        update(Questionnaire)
+        .where(Questionnaire.id == q.id)
+        .values(submission_count=Questionnaire.submission_count + 1)
+    )
     await db.flush()
 
     return {
@@ -94,7 +104,7 @@ admin_router = APIRouter(prefix="/evaluations", tags=["evaluations"])
 async def get_evaluations_for_questionnaire(
     questionnaire_id: str,
     db: DBSessionDep = None,
-    _user=None,  # Auth required via router
+    _user: CurrentUserDep = None,
 ):
     """Get all evaluations and stats for a questionnaire."""
     eval_repo = EvaluationRepository(db)
@@ -131,14 +141,22 @@ async def get_evaluations_for_questionnaire(
             valid_count=len(vals),
         ))
 
-    # Flavor frequencies
+    # Flavor frequencies — resolve term IDs to names
     flavor_map: dict[str, int] = {}
     for e in evaluations:
         if e.flavor_term_ids:
             for f in e.flavor_term_ids:
                 flavor_map[f] = flavor_map.get(f, 0) + 1
-    top_flavors = sorted(flavor_map.items(), key=lambda x: x[1], reverse=True)[:8]
-    flavors = [FlavorFrequency(name=name, count=count) for name, count in top_flavors]
+
+    # Resolve term IDs to display names
+    from ...repositories.terms import TermRepository
+    term_repo = TermRepository(db)
+    top_flavors_items = sorted(flavor_map.items(), key=lambda x: x[1], reverse=True)[:8]
+    flavors = []
+    for term_id, count in top_flavors_items:
+        term = await term_repo.get_by_id(term_id)
+        name = term.value if term else term_id[:8]
+        flavors.append(FlavorFrequency(name=name, count=count))
 
     return {
         "evaluations": [

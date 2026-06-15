@@ -14,9 +14,11 @@ def generate_share_code() -> str:
 
 
 def generate_share_url(share_code: str) -> str:
-    """Generate the public share URL."""
-    # In production this should come from config
-    return f"/eval/{share_code}"
+    """Generate the public share URL using configured frontend base URL."""
+    from ..core.config import settings
+    base = settings.public_frontend_base_url.rstrip("/")
+    # Hash router frontend: /#/eval/{share_code}
+    return f"{base}/#/eval/{share_code}"
 
 
 def is_expired(questionnaire: Questionnaire) -> bool:

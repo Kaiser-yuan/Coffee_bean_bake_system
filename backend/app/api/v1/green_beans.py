@@ -11,7 +11,7 @@ from ...models.all_models import GreenBean, PurchaseBatch, StandardTerm
 from ...repositories.green_beans import GreenBeanRepository
 from ...repositories.purchase_batches import PurchaseBatchRepository
 from ...repositories.terms import TermRepository
-from ...services.inventory import check_and_record_inventory
+from ...services.inventory import calculate_remaining_stock, append_inventory_ledger
 from ...schemas.all_schemas import (
     GreenBeanMatchResponse, GreenBeanResponse,
     GreenBeanWithFirstPurchaseRequest, PurchaseBatchCreateRequest,
@@ -125,11 +125,11 @@ async def create_green_bean_with_first_purchase(
     db.add(pb)
     await db.flush()
 
-    # Record initial inventory
-    await check_and_record_inventory(
+    # Record initial inventory: change = total_weight, resulting = total_weight
+    await append_inventory_ledger(
         db=db,
         purchase_batch_id=pb.id,
-        required_grams=body.total_weight_grams,
+        change_grams=body.total_weight_grams,
         event_type="purchase_in",
         related_entity_type="purchase_batch",
         related_entity_id=pb.id,
@@ -171,16 +171,16 @@ async def add_purchase_batch(
     db.add(pb)
     await db.flush()
 
-    await check_and_record_inventory(
+    # Record initial inventory: change = total_weight, resulting = total_weight
+    await append_inventory_ledger(
         db=db,
         purchase_batch_id=pb.id,
-        required_grams=body.total_weight_grams,
+        change_grams=body.total_weight_grams,
         event_type="purchase_in",
         related_entity_type="purchase_batch",
         related_entity_id=pb.id,
     )
 
-    from ...services.inventory import calculate_remaining_stock
     remaining = await calculate_remaining_stock(db, pb.id)
 
     return PurchaseBatchResponse(

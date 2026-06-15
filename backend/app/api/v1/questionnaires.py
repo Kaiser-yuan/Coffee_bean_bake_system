@@ -175,18 +175,20 @@ async def get_public_questionnaire(
     if is_expired(q):
         raise QuestionnaireExpiredException()
 
-    # Return only info needed for public form
-    batch = None
-    if q.roasting_batch_id:
-        result = await db.execute(
-            select(RoastingBatch).where(RoastingBatch.id == q.roasting_batch_id)
-        )
-        batch = result.scalar_one_or_none()
+    # Load batch with green bean info for public form
+    from ...repositories.roasting_batches import RoastingBatchRepository
+    batch_repo = RoastingBatchRepository(db)
+    batch = await batch_repo.get_detail(q.roasting_batch_id)
+
+    green_bean_name = None
+    if batch and hasattr(batch, "purchase_batch") and batch.purchase_batch:
+        if hasattr(batch.purchase_batch, "green_bean") and batch.purchase_batch.green_bean:
+            green_bean_name = batch.purchase_batch.green_bean.name
 
     return {
         "share_code": q.share_code,
         "roast_date": batch.roasted_at.isoformat() if batch and batch.roasted_at else None,
-        "green_bean_name": None,  # Will be populated when we join green_bean
+        "green_bean_name": green_bean_name,
         "status": q.status,
         "expires_at": q.expires_at.isoformat() if q.expires_at else None,
     }

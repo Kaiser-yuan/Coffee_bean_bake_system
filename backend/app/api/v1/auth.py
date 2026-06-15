@@ -3,10 +3,11 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from ..dependencies import DBSessionDep
-from ...core.exceptions import UnauthorizedException, ValidationException
+from ...core.config import settings
+from ...core.exceptions import UnauthorizedException, ValidationException, ForbiddenException
 from ...core.security import create_access_token, hash_password, verify_password
 from ...models.all_models import User
 
@@ -56,8 +57,16 @@ async def login(body: LoginRequest, db: DBSessionDep):
 
 @router.post("/register", response_model=LoginResponse, status_code=201)
 async def register(body: RegisterRequest, db: DBSessionDep):
-    """Register a new user and return token (first-run setup)."""
-    # Check existing
+    """Register the first user (admin). Only allowed when no users exist.
+
+    After the first admin is created, registration is closed.
+    Set ALLOW_FIRST_USER_REGISTRATION=false in production to disable entirely.
+    """
+    # Check if registration is allowed by config
+    if not settings.allow_first_user_registration:
+        raise ForbiddenException("自助注册当前已关闭，请联系管理员创建账户")
+
+    # Check existing username
     result = await db.execute(select(User).where(User.username == body.username))
     if result.scalar_one_or_none():
         raise ValidationException("用户名已存在")
@@ -65,10 +74,19 @@ async def register(body: RegisterRequest, db: DBSessionDep):
     if len(body.password) < 6:
         raise ValidationException("密码长度至少 6 位")
 
+    # Check if any user already exists — if yes, reject
+    count_result = await db.execute(select(func.count()).select_from(User))
+    user_count = count_result.scalar_one()
+    if user_count > 0:
+        raise ForbiddenException("系统已存在管理员，不再接受自助注册")
+
+    is_first_user = user_count == 0
+
     user = User(
         username=body.username,
         hashed_password=hash_password(body.password),
         display_name=body.display_name or body.username,
+        is_admin=is_first_user,  # First user is automatically admin
     )
     db.add(user)
     await db.flush()

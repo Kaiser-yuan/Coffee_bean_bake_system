@@ -106,9 +106,9 @@ class GreenBeanWithFirstPurchaseRequest(BaseModel):
 
     # Purchase batch fields
     purchase_date: str | None = None
-    total_weight_grams: int
-    unit_price_fen_per_kg: int | None = None
-    moisture_content_percent: float | None = None
+    total_weight_grams: int = Field(gt=0)
+    unit_price_fen_per_kg: int | None = Field(default=None, ge=0)
+    moisture_content_percent: float | None = Field(default=None, ge=0, le=100)
     supplier: str | None = None
     lot_number: str | None = None
     notes: str | None = None
@@ -116,9 +116,9 @@ class GreenBeanWithFirstPurchaseRequest(BaseModel):
 
 class PurchaseBatchCreateRequest(BaseModel):
     purchase_date: str
-    total_weight_grams: int
-    unit_price_fen_per_kg: int | None = None
-    moisture_content_percent: float | None = None
+    total_weight_grams: int = Field(gt=0)
+    unit_price_fen_per_kg: int | None = Field(default=None, ge=0)
+    moisture_content_percent: float | None = Field(default=None, ge=0, le=100)
     supplier: str | None = None
     lot_number: str | None = None
     notes: str | None = None
@@ -156,7 +156,7 @@ class InventoryLedgerResponse(BaseModel):
 
 class InventoryAdjustmentRequest(BaseModel):
     amount_grams: int
-    reason: str
+    reason: str = Field(min_length=1)
     notes: str | None = None
 
 
@@ -166,18 +166,18 @@ class InventoryAdjustmentRequest(BaseModel):
 class RoastingBatchCreateRequest(BaseModel):
     purchase_batch_id: str
     planned_at: str
-    planned_input_weight_grams: int
+    planned_input_weight_grams: int = Field(gt=0)
     target_description: str | None = None
     roast_level: str | None = None
 
 
 class BatchCompleteRequest(BaseModel):
-    roasted_at: str
-    actual_input_weight_grams: int
+    roasted_at: datetime
+    actual_input_weight_grams: int = Field(gt=0)
 
 
 class OutputWeightUpdateRequest(BaseModel):
-    output_weight_grams: int
+    output_weight_grams: int = Field(gt=0)
 
 
 class BatchCompleteness(BaseModel):
@@ -353,20 +353,20 @@ class PublicQuestionnaireResponse(BaseModel):
 # Evaluations
 # ============================================================
 class EvaluationSubmitRequest(BaseModel):
-    evaluator_name: str | None = None
+    evaluator_name: str | None = Field(default=None, max_length=64)
     evaluator_type: str | None = None
     brew_method: str | None = None
     drink_temperature: str | None = None
     drink_form: str | None = None
-    dry_fragrance_score: int | None = None
-    wet_aroma_score: int | None = None
-    acidity_intensity_score: int | None = None
-    sweetness_score: int | None = None
-    bitterness_intensity_score: int | None = None
-    aftertaste_score: int | None = None
-    overall_preference_score: int
-    flavor_notes: list[str] = []
-    free_notes: str | None = None
+    dry_fragrance_score: int | None = Field(default=None, ge=1, le=5)
+    wet_aroma_score: int | None = Field(default=None, ge=1, le=5)
+    acidity_intensity_score: int | None = Field(default=None, ge=1, le=5)
+    sweetness_score: int | None = Field(default=None, ge=1, le=5)
+    bitterness_intensity_score: int | None = Field(default=None, ge=1, le=5)
+    aftertaste_score: int | None = Field(default=None, ge=1, le=5)
+    overall_preference_score: int = Field(ge=1, le=5)
+    flavor_notes: list[str] = Field(default_factory=list, max_length=50)
+    free_notes: str | None = Field(default=None, max_length=2000)
 
 
 class DimensionSummary(BaseModel):
@@ -444,11 +444,11 @@ class RemindersPutRequest(BaseModel):
 
 
 class NextRoastPlanRequest(BaseModel):
-    planned_at: str
+    planned_at: datetime
     purchase_batch_id: str
-    planned_input_weight_grams: int
+    planned_input_weight_grams: int = Field(gt=0)
     target_description: str | None = None
-    review_reminder_ids: list[str] = []
+    review_reminder_ids: list[str] = Field(default_factory=list, max_length=3)
 
 
 class NextRoastPlanResponse(BaseModel):

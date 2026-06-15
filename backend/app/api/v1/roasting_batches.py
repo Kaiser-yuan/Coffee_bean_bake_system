@@ -1,9 +1,7 @@
 """Roasting batches API."""
 import random
-from datetime import datetime, timezone
 
 from fastapi import APIRouter
-from sqlalchemy import select
 
 from ..dependencies import CurrentUserDep, DBSessionDep
 from ...core.exceptions import (
@@ -12,7 +10,9 @@ from ...core.exceptions import (
 from ...models.all_models import RoastingBatch
 from ...repositories.roasting_batches import RoastingBatchRepository
 from ...repositories.purchase_batches import PurchaseBatchRepository
-from ...services.inventory import calculate_remaining_stock, check_and_record_inventory
+from ...services.inventory import (
+    calculate_remaining_stock, append_inventory_ledger, lock_purchase_batch,
+)
 from ...services.roasting import compute_batch_completeness, compute_allowed_actions
 from ...schemas.all_schemas import (
     RoastingBatchCreateRequest, BatchCompleteRequest, OutputWeightUpdateRequest,
@@ -113,7 +113,7 @@ async def create_roasting_batch(
     batch = RoastingBatch(
         purchase_batch_id=body.purchase_batch_id,
         status="planned",
-        planned_at=datetime.fromisoformat(body.planned_at) if body.planned_at else None,
+        planned_at=body.planned_at,
         planned_input_weight_grams=body.planned_input_weight_grams,
         target_description=body.target_description,
         color_tag=random.choice(BATCH_COLORS),
@@ -145,7 +145,11 @@ async def complete_batch(
     db: DBSessionDep = None,
     _user: CurrentUserDep = None,
 ):
-    """Mark a planned batch as completed. Deducts inventory."""
+    """Mark a planned batch as completed. Deducts inventory.
+
+    Uses pessimistic locking on the purchase batch row to prevent
+    concurrent completion from driving inventory negative.
+    """
     repo = RoastingBatchRepository(db)
     batch = await repo.get_by_id(batch_id)
     if not batch:
@@ -157,20 +161,35 @@ async def complete_batch(
     if body.actual_input_weight_grams <= 0:
         raise ValidationException("实际投豆量必须大于零")
 
-    # Deduct inventory (transactional — DB session handles this)
-    await check_and_record_inventory(
+    # Pessimistic lock on purchase batch
+    _pb = await lock_purchase_batch(db, batch.purchase_batch_id)
+    if not _pb:
+        raise NotFoundException("PurchaseBatch", batch.purchase_batch_id)
+
+    # Re-check inventory under lock
+    remaining = await calculate_remaining_stock(db, batch.purchase_batch_id)
+    if body.actual_input_weight_grams > remaining:
+        from ...core.exceptions import InsufficientInventoryException
+        raise InsufficientInventoryException(
+            available_grams=remaining,
+            required_grams=body.actual_input_weight_grams,
+        )
+
+    # Update batch
+    batch.status = "completed"
+    batch.roasted_at = body.roasted_at
+    batch.actual_input_weight_grams = body.actual_input_weight_grams
+    await db.flush()
+
+    # Record ledger: consumption is negative
+    await append_inventory_ledger(
         db=db,
         purchase_batch_id=batch.purchase_batch_id,
-        required_grams=body.actual_input_weight_grams,
+        change_grams=-body.actual_input_weight_grams,
         event_type="roast_consumption",
         related_entity_type="roasting_batch",
         related_entity_id=batch.id,
     )
-
-    # Update batch
-    batch.status = "completed"
-    batch.roasted_at = datetime.fromisoformat(body.roasted_at) if body.roasted_at else None
-    batch.actual_input_weight_grams = body.actual_input_weight_grams
     await db.flush()
 
     return _to_batch_response(batch)
@@ -182,7 +201,10 @@ async def reopen_batch(
     db: DBSessionDep = None,
     _user: CurrentUserDep = None,
 ):
-    """Reopen a completed batch. Restores inventory."""
+    """Reopen a completed batch. Restores inventory.
+
+    Uses pessimistic locking to prevent race conditions.
+    """
     repo = RoastingBatchRepository(db)
     batch = await repo.get_by_id(batch_id)
     if not batch:
@@ -191,22 +213,30 @@ async def reopen_batch(
     if batch.status != "completed":
         raise InvalidBatchStatusException(batch.status, "completed")
 
-    # Restore inventory
     consumed = batch.actual_input_weight_grams or batch.planned_input_weight_grams
-    await check_and_record_inventory(
-        db=db,
-        purchase_batch_id=batch.purchase_batch_id,
-        required_grams=consumed,
-        event_type="roast_return",
-        related_entity_type="roasting_batch",
-        related_entity_id=batch.id,
-    )
 
+    # Pessimistic lock
+    _pb = await lock_purchase_batch(db, batch.purchase_batch_id)
+    if not _pb:
+        raise NotFoundException("PurchaseBatch", batch.purchase_batch_id)
+
+    # Update batch
     batch.status = "planned"
     batch.roasted_at = None
     batch.actual_input_weight_grams = None
     batch.output_weight_grams = None
     batch.weight_loss_percent = None
+    await db.flush()
+
+    # Record ledger: return is positive (restoring inventory)
+    await append_inventory_ledger(
+        db=db,
+        purchase_batch_id=batch.purchase_batch_id,
+        change_grams=consumed,
+        event_type="roast_return",
+        related_entity_type="roasting_batch",
+        related_entity_id=batch.id,
+    )
     await db.flush()
 
     return _to_batch_response(batch)
@@ -218,7 +248,10 @@ async def void_batch(
     db: DBSessionDep = None,
     _user: CurrentUserDep = None,
 ):
-    """Void a batch. If completed, restores inventory."""
+    """Void a batch. If completed, restores inventory.
+
+    Uses pessimistic locking to prevent race conditions.
+    """
     repo = RoastingBatchRepository(db)
     batch = await repo.get_by_id(batch_id)
     if not batch:
@@ -227,20 +260,29 @@ async def void_batch(
     if batch.status == "voided":
         raise InvalidBatchStatusException(batch.status, "planned or completed")
 
-    # If completed, restore inventory
+    # If completed, restore inventory under lock
     if batch.status == "completed":
         consumed = batch.actual_input_weight_grams or batch.planned_input_weight_grams
-        await check_and_record_inventory(
+
+        _pb = await lock_purchase_batch(db, batch.purchase_batch_id)
+        if not _pb:
+            raise NotFoundException("PurchaseBatch", batch.purchase_batch_id)
+
+        batch.status = "voided"
+        await db.flush()
+
+        await append_inventory_ledger(
             db=db,
             purchase_batch_id=batch.purchase_batch_id,
-            required_grams=consumed,
+            change_grams=consumed,
             event_type="roast_return",
             related_entity_type="roasting_batch",
             related_entity_id=batch.id,
         )
-
-    batch.status = "voided"
-    await db.flush()
+        await db.flush()
+    else:
+        batch.status = "voided"
+        await db.flush()
 
     return _to_batch_response(batch)
 

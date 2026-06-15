@@ -27,6 +27,10 @@ class RoastingBatchRepository(BaseRepository[RoastingBatch]):
             .options(
                 selectinload(RoastingBatch.purchase_batch).selectinload(PurchaseBatch.green_bean),
                 selectinload(RoastingBatch.active_curve),
+                selectinload(RoastingBatch.roast_level),
+                selectinload(RoastingBatch.questionnaires),
+                selectinload(RoastingBatch.review),
+                selectinload(RoastingBatch.curve_files),
             )
         )
 
@@ -60,9 +64,11 @@ class RoastingBatchRepository(BaseRepository[RoastingBatch]):
             .options(
                 selectinload(RoastingBatch.purchase_batch).selectinload(PurchaseBatch.green_bean),
                 selectinload(RoastingBatch.active_curve),
+                selectinload(RoastingBatch.curve_files),
                 selectinload(RoastingBatch.reminders),
                 selectinload(RoastingBatch.review),
                 selectinload(RoastingBatch.questionnaires),
+                selectinload(RoastingBatch.roast_level),
             )
             .where(RoastingBatch.id == batch_id)
         )

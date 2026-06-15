@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
+    # Auth
+    allow_first_user_registration: bool = True
+
+    # Public frontend URL for share links
+    public_frontend_base_url: str = "http://localhost:5173"
+
     @property
     def upload_path(self) -> Path:
         p = PROJECT_ROOT / self.upload_dir

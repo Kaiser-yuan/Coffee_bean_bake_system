@@ -36,6 +36,7 @@ class User(Base):
     username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     hashed_password: Mapped[str] = mapped_column(String(256), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(128))
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
@@ -360,12 +361,18 @@ class ReviewReminder(Base):
 # 13. batch_reminders — 烘焙批次提醒快照
 # ============================================================
 class BatchReminder(Base):
-    """Immutable reminder snapshots copied to a roasting batch."""
+    """Immutable reminder snapshots copied to a roasting batch.
+
+    source_review_reminder_id is stored as a plain UUID field (no FK constraint)
+    so that deleting a review's reminders does not break existing batches.
+    """
     __tablename__ = "batch_reminders"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_uuid)
     roasting_batch_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("roasting_batches.id"), nullable=False, index=True)
-    source_review_reminder_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), ForeignKey("review_reminders.id"))
+    source_review_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False))
+    source_roasting_batch_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False))
+    source_review_reminder_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False))
     priority: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     is_completed: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -377,7 +384,6 @@ class BatchReminder(Base):
     )
 
     roasting_batch = relationship("RoastingBatch", back_populates="reminders")
-    source_reminder = relationship("ReviewReminder")
 
 
 # ============================================================

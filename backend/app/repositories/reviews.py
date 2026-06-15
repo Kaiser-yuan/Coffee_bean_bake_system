@@ -34,7 +34,6 @@ class BatchReminderRepository(BaseRepository[BatchReminder]):
     async def get_by_batch(self, roasting_batch_id: str) -> list[BatchReminder]:
         result = await self.db.execute(
             select(BatchReminder)
-            .options(selectinload(BatchReminder.source_reminder))
             .where(BatchReminder.roasting_batch_id == roasting_batch_id)
             .order_by(BatchReminder.priority)
         )

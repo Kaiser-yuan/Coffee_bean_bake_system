@@ -137,3 +137,23 @@ class CurveParseFailedException(AppException):
             message=f"CSV 解析失败: {error_message}",
             status_code=422,
         )
+
+
+class CurveAlignmentEventMissingException(AppException):
+    """Raised when a required alignment event is missing during curve comparison."""
+    def __init__(self, batch_id: str, event_type: str):
+        super().__init__(
+            code="CURVE_ALIGNMENT_EVENT_MISSING",
+            message=f"批次 {batch_id} 缺少对齐事件: {event_type}",
+            details={"batch_id": batch_id, "missing_event": event_type},
+            status_code=400,
+        )
+
+
+class RegistrationClosedException(AppException):
+    def __init__(self):
+        super().__init__(
+            code="REGISTRATION_CLOSED",
+            message="系统已存在管理员，不再接受自助注册",
+            status_code=403,
+        )

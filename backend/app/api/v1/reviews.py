@@ -18,7 +18,7 @@ from ...schemas.all_schemas import (
     NextRoastPlanRequest, NextRoastPlanResponse,
 )
 
-router = APIRouter(prefix="/reviews", tags=["reviews"])
+router = APIRouter(tags=["reviews"])
 
 
 def _to_reminder_response(r) -> ReminderResponse:
@@ -219,7 +219,7 @@ async def create_next_roast_plan(
     new_batch = RoastingBatch(
         purchase_batch_id=body.purchase_batch_id,
         status="planned",
-        planned_at=datetime.fromisoformat(body.planned_at) if body.planned_at else None,
+        planned_at=body.planned_at,
         planned_input_weight_grams=body.planned_input_weight_grams,
         target_description=body.target_description,
         color_tag=random.choice(BATCH_COLORS),
@@ -242,6 +242,8 @@ async def create_next_roast_plan(
             if source_rem:
                 snapshot = BatchReminder(
                     roasting_batch_id=new_batch.id,
+                    source_review_id=review.id,
+                    source_roasting_batch_id=batch_id,
                     source_review_reminder_id=source_rem.id,
                     priority=source_rem.priority,
                     content=source_rem.content,

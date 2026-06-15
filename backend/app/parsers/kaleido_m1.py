@@ -1,10 +1,25 @@
 """
 Kaleido M1 KLDO V101 CSV parser.
 Parses Kaleido M1 CSV files with format:
+
+  KLDO data file V101
+
   [{PARAMETERS}]
+  [{TotalTime}]
+  06:25
+
+  [{PreTemp}]
+  206
+
   [{EVENT}]
+  [{StartBeansIn}]
+  206@00:00
+
+  [{TemperBack}]
+  111@00:59
+
   [{DATA}]
-  index, Time, BT, ET, RoR, SV, HP, HPM, SM, RL, PS
+  Index,Time,BT,ET,RoR,SV,HPM,HP,SM,RL,PS
 
 Reference files: 260530_9.csv, 260530_10.csv
 """
@@ -17,53 +32,51 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger("coffee-roast.parser")
 
+# ---------------------------------------------------------------------------
+# Event name mapping: Kaleido M1 → internal event type
+# ---------------------------------------------------------------------------
+EVENT_TYPE_MAP = {
+    "StartBeansIn": "charge",
+    "TemperBack": "turning_point",
+    "TurntoYellow": "yellowing",
+    "1stBoomStart": "first_crack_start",
+    "1stBoomEnd": "first_crack_end",
+    "2ndBoomStart": "second_crack_start",
+    "2ndBoomEnd": "second_crack_end",
+    "BeansColdDown": "drop",
+}
+
+# ---------------------------------------------------------------------------
+# Parameter name mapping
+# ---------------------------------------------------------------------------
+PARAM_NAME_MAP = {
+    "TotalTime": "total_time",
+    "PreTemp": "preheat_temp",
+    "CookDate": "cooked_at",
+    "Comment": "comment",
+}
+
+# ---------------------------------------------------------------------------
+# Dataclasses
+# ---------------------------------------------------------------------------
 
 @dataclass
 class KaleidoParameters:
+    total_time: str | None = None       # Raw time string e.g. "06:25"
     preheat_temp: float | None = None
-    charge_temp: float | None = None
-
-    @classmethod
-    def from_lines(cls, lines: list[str]) -> "KaleidoParameters":
-        params = cls()
-        for line in lines:
-            line = line.strip()
-            if "=" in line:
-                key, _, value = line.partition("=")
-                key = key.strip()
-                value = value.strip()
-                if key == "Pre Heat Temperature":
-                    try:
-                        params.preheat_temp = float(value)
-                    except ValueError:
-                        pass
-                elif key == "Charge Temperature":
-                    try:
-                        params.charge_temp = float(value)
-                    except ValueError:
-                        pass
-        return params
+    cooked_at: str | None = None
+    comment: str | None = None
 
 
 @dataclass
 class KaleidoEvent:
-    event_type: str  # charge, tp, yellowing, fc_start, fc_end, sc_start, sc_end, drop
+    event_type: str  # charge, turning_point, yellowing, first_crack_start, ...
     time_seconds: float
     bean_temp: float | None = None
 
     def to_normalized_type(self) -> str:
-        """Map Kaleido event names to standard type names."""
-        mapping = {
-            "CHARGE": "charge",
-            "TURNING POINT": "turning_point",
-            "Y": "yellowing",
-            "FCs": "first_crack_start",
-            "FCe": "first_crack_end",
-            "SCs": "second_crack_start",
-            "SCe": "second_crack_end",
-            "DROP": "drop",
-        }
-        return mapping.get(self.event_type, self.event_type.lower())
+        """Already normalized — kept for backward compatibility."""
+        return self.event_type
 
 
 @dataclass
@@ -98,9 +111,287 @@ class KaleidoParsedData:
         return len(self.points)
 
 
+# ---------------------------------------------------------------------------
+# Section splitting
+# ---------------------------------------------------------------------------
+
+def split_kldo_sections(lines: list[str]) -> dict[str, list[str]]:
+    """Split KLDO file contents into sections:
+       - params: lines under [{PARAMETERS}]
+       - events: lines under [{EVENT}]
+       - data: lines under [{DATA}]
+    """
+    sections: dict[str, list[str]] = {"params": [], "events": [], "data": []}
+    section: str | None = None
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        if stripped == "[{PARAMETERS}]":
+            section = "params"
+            continue
+        elif stripped == "[{EVENT}]":
+            section = "events"
+            continue
+        elif stripped == "[{DATA}]":
+            section = "data"
+            continue
+
+        if section:
+            sections[section].append(stripped)
+
+    return sections
+
+
+# ---------------------------------------------------------------------------
+# Parameter parsing (marker-value pairs)
+# ---------------------------------------------------------------------------
+
+def parse_marker_value_section(lines: list[str]) -> KaleidoParameters:
+    """Parse Kaleido M1 parameter section.
+
+    Format: each parameter is a marker line like `[{TotalTime}]`
+            immediately followed by its value on the next line.
+    """
+    params = KaleidoParameters()
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        # Match marker: [{SomeName}]
+        m = re.match(r"\[\{(\w+)\}\]", line)
+        if m:
+            param_name = m.group(1)
+            # Value is on the next line (if exists)
+            if i + 1 < len(lines):
+                value = lines[i + 1]
+                # Make sure the value line is not itself a marker
+                if not re.match(r"\[\{\w+\}\]", value):
+                    mapped = PARAM_NAME_MAP.get(param_name, param_name.lower())
+                    if mapped == "preheat_temp":
+                        try:
+                            params.preheat_temp = float(value)
+                        except ValueError:
+                            pass
+                    elif mapped == "total_time":
+                        params.total_time = value
+                    elif mapped == "cooked_at":
+                        params.cooked_at = value
+                    elif mapped == "comment":
+                        params.comment = value
+                    i += 2
+                    continue
+        i += 1
+
+    return params
+
+
+# ---------------------------------------------------------------------------
+# Event parsing (marker-value pairs with value@time format)
+# ---------------------------------------------------------------------------
+
+def parse_event_section(lines: list[str]) -> list[KaleidoEvent]:
+    """Parse Kaleido M1 event section.
+
+    Format: each event is a marker line like `[{StartBeansIn}]`
+            immediately followed by a value like `206@00:00`
+            where format is `<temperature>@<mm:ss>`
+    """
+    events: list[KaleidoEvent] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m = re.match(r"\[\{(\w+)\}\]", line)
+        if m:
+            raw_event_name = m.group(1)
+            event_type = EVENT_TYPE_MAP.get(raw_event_name)
+            if event_type is None:
+                # Unknown event — skip
+                i += 1
+                continue
+
+            # Value is on the next line (if exists)
+            if i + 1 < len(lines):
+                value_line = lines[i + 1]
+                if not re.match(r"\[\{\w+\}\]", value_line):
+                    bean_temp, time_seconds = parse_event_value(value_line)
+                    events.append(KaleidoEvent(
+                        event_type=event_type,
+                        time_seconds=time_seconds,
+                        bean_temp=bean_temp,
+                    ))
+                    i += 2
+                    continue
+        i += 1
+
+    return events
+
+
+def parse_event_value(value: str) -> tuple[float | None, float]:
+    """Parse event value in format `<temperature>@<mm:ss>` or `<temperature>@<seconds>`.
+
+    Returns (bean_temp, time_seconds).
+    """
+    if "@" not in value:
+        # Fallback: treat whole value as seconds
+        try:
+            return None, float(value)
+        except ValueError:
+            return None, 0.0
+
+    temp_str, time_str = value.split("@", 1)
+    temp_str = temp_str.strip()
+    time_str = time_str.strip()
+
+    bean_temp = None
+    if temp_str:
+        try:
+            bean_temp = float(temp_str)
+        except ValueError:
+            pass
+
+    time_seconds = _parse_time_to_seconds(time_str)
+
+    return bean_temp, time_seconds
+
+
+def _parse_time_to_seconds(time_str: str) -> float:
+    """Parse time string in format mm:ss or raw seconds."""
+    if ":" in time_str:
+        parts = time_str.split(":")
+        if len(parts) == 2:
+            try:
+                minutes = float(parts[0])
+                seconds = float(parts[1])
+                return minutes * 60.0 + seconds
+            except ValueError:
+                return 0.0
+    try:
+        return float(time_str)
+    except ValueError:
+        return 0.0
+
+
+# ---------------------------------------------------------------------------
+# DATA rows parsing
+# ---------------------------------------------------------------------------
+
+def parse_data_rows(lines: list[str]) -> list[KaleidoDataPoint]:
+    """Parse the [{DATA}] CSV section."""
+    if not lines:
+        return []
+
+    reader = csv.DictReader(io.StringIO("\n".join(lines)))
+    points: list[KaleidoDataPoint] = []
+
+    for row in reader:
+        # Normalize column names (strip whitespace)
+        row = {k.strip(): v.strip() for k, v in row.items()}
+
+        # Index (capital I)
+        sample_idx = int(row.get("Index", 0))
+
+        # Time is in milliseconds — convert to seconds
+        time_ms_raw = row.get("Time", "0")
+        time_sec = float(time_ms_raw) / 1000.0
+
+        point = KaleidoDataPoint(
+            sample_index=sample_idx,
+            elapsed_seconds=time_sec,
+        )
+
+        # BT — raw value, do NOT divide by 10
+        bt_raw = row.get("BT", "")
+        if bt_raw and bt_raw != "0":
+            try:
+                val = float(bt_raw)
+                if val != 0:
+                    point.bean_temp_celsius = val
+            except ValueError:
+                pass
+
+        # ET — raw value, do NOT divide by 10
+        et_raw = row.get("ET", "")
+        if et_raw and et_raw != "0":
+            try:
+                val = float(et_raw)
+                if val != 0:
+                    point.environment_temp_celsius = val
+            except ValueError:
+                pass
+
+        # RoR — raw value, do NOT divide by 10
+        ror_raw = row.get("RoR", "")
+        if ror_raw and ror_raw != "0":
+            try:
+                val = float(ror_raw)
+                if val != 0:
+                    point.ror_celsius_per_minute = val
+            except ValueError:
+                pass
+
+        # SV (target temp) — raw value, do NOT divide by 10
+        sv_raw = row.get("SV", "")
+        if sv_raw and sv_raw != "0":
+            try:
+                val = float(sv_raw)
+                if val != 0:
+                    point.target_temp_celsius = val
+            except ValueError:
+                pass
+
+        # HP — heating power
+        hp_raw = row.get("HP", "")
+        if hp_raw:
+            try:
+                val = int(hp_raw)
+                if val > 0:
+                    point.heating_power_percent = val
+            except ValueError:
+                pass
+
+        # HPM — heating power mode
+        hpm_raw = row.get("HPM", "")
+        if hpm_raw:
+            point.heating_power_mode = hpm_raw
+
+        # SM — smoke damper
+        sm_raw = row.get("SM", "")
+        if sm_raw:
+            try:
+                val = int(sm_raw)
+                if val >= 0:
+                    point.smoke_damper_percent = val
+            except ValueError:
+                pass
+
+        # RL — roller
+        rl_raw = row.get("RL", "")
+        if rl_raw:
+            try:
+                val = int(rl_raw)
+                if val >= 0:
+                    point.roller_percent = val
+            except ValueError:
+                pass
+
+        # PS — power status
+        ps_raw = row.get("PS", "")
+        if ps_raw:
+            point.power_status = ps_raw
+
+        points.append(point)
+
+    return points
+
+
+# ---------------------------------------------------------------------------
+# Main parse entry point
+# ---------------------------------------------------------------------------
+
 def parse_kaleido_m1(content: bytes, filename: str) -> KaleidoParsedData:
     """Parse a Kaleido M1 KLDO V101 CSV file."""
-
     # Compute hash
     file_hash = hashlib.sha256(content).hexdigest()
 
@@ -115,151 +406,24 @@ def parse_kaleido_m1(content: bytes, filename: str) -> KaleidoParsedData:
     if first_line != "KLDO data file V101":
         raise ValueError(f"Unexpected format: '{first_line}'. Expected 'KLDO data file V101'.")
 
-    data = KaleidoParsedData(file_hash=file_hash)
+    # Split into sections
+    sections = split_kldo_sections(lines[1:])
 
-    # Parse sections
-    section = None
-    param_lines: list[str] = []
-    event_lines: list[str] = []
-    data_lines: list[str] = []
+    # Parse parameters (marker-value pairs)
+    parameters = parse_marker_value_section(sections["params"])
 
-    for line in lines[1:]:
-        line = line.strip()
-        if not line:
-            continue
+    # Parse events (marker-value pairs with value@time)
+    events = parse_event_section(sections["events"])
 
-        if line == "[{PARAMETERS}]":
-            section = "params"
-            continue
-        elif line == "[{EVENT}]":
-            section = "events"
-            continue
-        elif line == "[{DATA}]":
-            section = "data"
-            continue
+    # Parse DATA rows
+    points = parse_data_rows(sections["data"])
 
-        if section == "params":
-            param_lines.append(line)
-        elif section == "events":
-            event_lines.append(line)
-        elif section == "data":
-            data_lines.append(line)
-
-    # Parse parameters
-    data.parameters = KaleidoParameters.from_lines(param_lines)
-
-    # Parse events
-    for line in event_lines:
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) >= 3:
-            event_label = parts[0]
-            try:
-                time_sec = float(parts[1]) / 1000.0
-            except (ValueError, IndexError):
-                continue
-            bean_temp = None
-            try:
-                bt_str = parts[2].replace("°C", "").strip()
-                if bt_str:
-                    bean_temp = float(bt_str)
-            except (ValueError, IndexError):
-                pass
-            data.events.append(KaleidoEvent(
-                event_type=event_label,
-                time_seconds=time_sec,
-                bean_temp=bean_temp,
-            ))
-
-    # Parse CSV data section
-    if data_lines:
-        reader = csv.DictReader(io.StringIO("\n".join(data_lines)))
-
-        for row in reader:
-            # Normalize column names (strip whitespace)
-            row = {k.strip(): v.strip() for k, v in row.items()}
-
-            sample_idx = int(row.get("index", 0))
-            time_ms_raw = row.get("Time", "0")
-            time_sec = float(time_ms_raw) / 1000.0
-
-            point = KaleidoDataPoint(
-                sample_index=sample_idx,
-                elapsed_seconds=time_sec,
-            )
-
-            # BT
-            bt_raw = row.get("BT", "")
-            if bt_raw and bt_raw != "0":
-                try:
-                    point.bean_temp_celsius = float(bt_raw) / 10.0
-                except ValueError:
-                    pass
-
-            # ET
-            et_raw = row.get("ET", "")
-            if et_raw and et_raw != "0":
-                try:
-                    point.environment_temp_celsius = float(et_raw) / 10.0
-                except ValueError:
-                    pass
-
-            # RoR
-            ror_raw = row.get("RoR", "")
-            if ror_raw and ror_raw != "0":
-                try:
-                    point.ror_celsius_per_minute = float(ror_raw) / 10.0
-                except ValueError:
-                    pass
-
-            # SV
-            sv_raw = row.get("SV", "")
-            if sv_raw and sv_raw != "0":
-                try:
-                    point.target_temp_celsius = float(sv_raw) / 10.0
-                except ValueError:
-                    pass
-
-            # HP — heating power
-            hp_raw = row.get("HP", "")
-            if hp_raw:
-                try:
-                    val = int(hp_raw)
-                    if val > 0:
-                        point.heating_power_percent = val
-                except ValueError:
-                    pass
-
-            # HPM — heating power mode
-            hpm_raw = row.get("HPM", "")
-            if hpm_raw:
-                point.heating_power_mode = hpm_raw
-
-            # SM — smoke damper
-            sm_raw = row.get("SM", "")
-            if sm_raw:
-                try:
-                    val = int(sm_raw)
-                    if val >= 0:
-                        point.smoke_damper_percent = val
-                except ValueError:
-                    pass
-
-            # RL — roller
-            rl_raw = row.get("RL", "")
-            if rl_raw:
-                try:
-                    val = int(rl_raw)
-                    if val >= 0:
-                        point.roller_percent = val
-                except ValueError:
-                    pass
-
-            # PS — power status
-            ps_raw = row.get("PS", "")
-            if ps_raw:
-                point.power_status = ps_raw
-
-            data.points.append(point)
+    data = KaleidoParsedData(
+        file_hash=file_hash,
+        parameters=parameters,
+        events=events,
+        points=points,
+    )
 
     # Add data quality warnings
     _check_data_quality(data)
@@ -267,39 +431,50 @@ def parse_kaleido_m1(content: bytes, filename: str) -> KaleidoParsedData:
     return data
 
 
+# ---------------------------------------------------------------------------
+# Quality checks
+# ---------------------------------------------------------------------------
+
 def _check_data_quality(data: KaleidoParsedData) -> None:
     """Generate data quality warnings without modifying raw data."""
     if not data.points:
         return
 
     # Check charge event temperature vs first BT sample
-    charge_ev = next((e for e in data.events if e.event_type == "CHARGE"), None)
+    charge_ev = next((e for e in data.events if e.event_type == "charge"), None)
     if charge_ev and data.points:
         first_bt = data.points[0].bean_temp_celsius
         if charge_ev.bean_temp and first_bt and abs(charge_ev.bean_temp - first_bt) > 5:
             data.warnings.append({
                 "code": "CHARGE_TEMP_DIFFERS",
                 "severity": "warning",
-                "message": f"入豆事件温度({charge_ev.bean_temp}°C)与首个BT采样值({first_bt}°C)存在差异，请核对事件标记或探针记录。",
+                "message": (
+                    f"入豆事件温度({charge_ev.bean_temp}°C)与首个BT采样值"
+                    f"({first_bt}°C)存在差异，请核对事件标记或探针记录。"
+                ),
                 "related_event": "charge",
             })
 
     # Check for missing key events
     event_types = {e.event_type for e in data.events}
-    key_events = ["CHARGE", "DROP"]
+    key_events = ["charge", "drop"]
     for ke in key_events:
         if ke not in event_types:
             data.warnings.append({
-                "code": f"MISSING_{ke}",
+                "code": f"MISSING_{ke.upper()}",
                 "severity": "warning",
                 "message": f"缺少关键事件: {ke}",
-                "related_event": ke.lower(),
+                "related_event": ke,
             })
 
 
+# ---------------------------------------------------------------------------
+# Derived metric computation (unchanged logic, but now works with correct data)
+# ---------------------------------------------------------------------------
+
 def compute_stage_metrics(data: KaleidoParsedData) -> dict:
     """Compute stage durations, ratios, and average RoR from parsed data."""
-    events_by_type = {e.to_normalized_type(): e for e in data.events}
+    events_by_type = {e.event_type: e for e in data.events}
 
     charge = events_by_type.get("charge")
     yellowing = events_by_type.get("yellowing")
@@ -367,7 +542,7 @@ def compute_stage_metrics(data: KaleidoParsedData) -> dict:
 
 
 def _compute_avg_ror(points: list[KaleidoDataPoint], start_sec: float, end_sec: float) -> float | None:
-    """Compute average RoR over a time range, excluding None values."""
+    """Compute average RoR over a time range, excluding None and zero values."""
     vals = [
         p.ror_celsius_per_minute
         for p in points
@@ -426,7 +601,6 @@ def compute_auc(points: list[KaleidoDataPoint], threshold_celsius: float = 100.0
     for i in range(1, len(filtered)):
         t0, bt0 = filtered[i - 1]
         t1, bt1 = filtered[i]
-        # Trapezoid: (bt0 + bt1)/2 * delta_t / 60
         delta_min = (t1 - t0) / 60.0
         auc += (bt0 + bt1) / 2.0 * delta_min
 

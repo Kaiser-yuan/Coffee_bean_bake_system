@@ -1,13 +1,17 @@
 """Roasting batch business logic — state machine and completeness."""
 import logging
 
-from ..models.all_models import RoastingBatch, CurveFile, BatchReview
+from ..models.all_models import RoastingBatch
 
 logger = logging.getLogger("coffee-roast.roasting")
 
 
 def compute_batch_completeness(batch: RoastingBatch) -> dict:
-    """Compute data completeness for a roasting batch."""
+    """Compute data completeness for a roasting batch.
+
+    missing_evaluation is determined by whether the batch
+    actually has evaluation submissions, not just a questionnaire.
+    """
     has_curve = False
     if hasattr(batch, "active_curve") and batch.active_curve:
         has_curve = True
@@ -19,7 +23,10 @@ def compute_batch_completeness(batch: RoastingBatch) -> dict:
 
     has_evaluation = False
     if hasattr(batch, "questionnaires") and batch.questionnaires:
-        has_evaluation = len(batch.questionnaires) > 0
+        for q in batch.questionnaires:
+            if q.submission_count > 0:
+                has_evaluation = True
+                break
 
     has_review = False
     if hasattr(batch, "review") and batch.review:

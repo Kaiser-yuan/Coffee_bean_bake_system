@@ -7,7 +7,7 @@ from ..dependencies import CurrentUserDep, DBSessionDep
 from ...core.exceptions import NotFoundException, ValidationException
 from ...models.all_models import InventoryAdjustment
 from ...repositories.purchase_batches import PurchaseBatchRepository, InventoryLedgerRepository
-from ...services.inventory import calculate_remaining_stock
+from ...services.inventory import calculate_remaining_stock, append_inventory_ledger, lock_purchase_batch
 from ...schemas.all_schemas import (
     PurchaseBatchResponse, InventoryLedgerResponse, InventoryAdjustmentRequest,
 )
@@ -75,12 +75,29 @@ async def create_inventory_adjustment(
     db: DBSessionDep = None,
     _user: CurrentUserDep = None,
 ):
-    """Create a manual inventory adjustment."""
-    # Validate purchase batch exists
-    pb_repo = PurchaseBatchRepository(db)
-    pb = await pb_repo.get_by_id(purchase_batch_id)
+    """Create a manual inventory adjustment.
+
+    Uses pessimistic locking on the purchase batch row.
+    amount_grams can be positive (increase) or negative (decrease).
+    """
+    # Pessimistic lock
+    pb = await lock_purchase_batch(db, purchase_batch_id)
     if not pb:
         raise NotFoundException("PurchaseBatch", purchase_batch_id)
+
+    # amount_grams must not be zero
+    if body.amount_grams == 0:
+        raise ValidationException("库存调整金额不能为 0")
+
+    # Check that negative adjustment doesn't exceed inventory
+    if body.amount_grams < 0:
+        remaining = await calculate_remaining_stock(db, purchase_batch_id)
+        if abs(body.amount_grams) > remaining:
+            from ...core.exceptions import InsufficientInventoryException
+            raise InsufficientInventoryException(
+                available_grams=remaining,
+                required_grams=abs(body.amount_grams),
+            )
 
     adjustment = InventoryAdjustment(
         purchase_batch_id=purchase_batch_id,
@@ -92,12 +109,11 @@ async def create_inventory_adjustment(
     db.add(adjustment)
     await db.flush()
 
-    # Record in ledger
-    from ...services.inventory import check_and_record_inventory
-    await check_and_record_inventory(
+    # Record ledger with actual change (can be negative)
+    await append_inventory_ledger(
         db=db,
         purchase_batch_id=purchase_batch_id,
-        required_grams=abs(body.amount_grams),
+        change_grams=body.amount_grams,
         event_type="adjustment",
         related_entity_type="inventory_adjustment",
         related_entity_id=adjustment.id,

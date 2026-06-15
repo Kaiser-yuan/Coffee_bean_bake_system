@@ -1,4 +1,10 @@
-"""Inventory calculation service."""
+"""Inventory calculation service.
+
+Separates "inventory fact calculation" from "ledger recording".
+The fact calculation is the source of truth. The ledger records
+what happened — its resulting_grams comes from the fact calculation,
+not from ledger arithmetic.
+"""
 import logging
 
 from sqlalchemy import select, func
@@ -15,10 +21,11 @@ async def calculate_remaining_stock(
     db: AsyncSession, purchase_batch_id: str
 ) -> int:
     """
-    remaining_weight_grams
-    = total_weight_grams
-    - SUM(completed & valid roasting batch actual_input_weight_grams)
-    + SUM(inventory adjustment amount_grams)
+    remaining = total_weight_grams
+              - SUM(completed roasting batches actual_input_weight_grams)
+              + SUM(inventory adjustments amount_grams)
+
+    This is the *fact* calculation — the single source of truth.
     """
     # Get purchase batch
     result = await db.execute(
@@ -38,7 +45,7 @@ async def calculate_remaining_stock(
     )
     roast_consumed = result.scalar_one()
 
-    # Sum of inventory adjustments
+    # Sum of inventory adjustments (can be negative)
     result = await db.execute(
         select(func.coalesce(func.sum(InventoryAdjustment.amount_grams), 0))
         .where(InventoryAdjustment.purchase_batch_id == purchase_batch_id)
@@ -49,39 +56,41 @@ async def calculate_remaining_stock(
     return max(0, remaining)
 
 
-async def check_and_record_inventory(
+async def append_inventory_ledger(
     db: AsyncSession,
     purchase_batch_id: str,
-    required_grams: int,
+    change_grams: int,
     event_type: str,
-    related_entity_type: str,
-    related_entity_id: str,
-) -> int:
+    related_entity_type: str | None = None,
+    related_entity_id: str | None = None,
+) -> InventoryLedger:
+    """Append a ledger entry.
+
+    change_grams: negative for consumption, positive for returns/adjustments.
+    resulting_grams is computed from the fact calculation AFTER the change
+    has been applied to the DB, so it always reflects reality.
     """
-    Validate inventory sufficiency, record a ledger entry,
-    and return the new resulting balance.
-    Raises InsufficientInventoryException if not enough.
-    """
-    from ..core.exceptions import InsufficientInventoryException
+    resulting = await calculate_remaining_stock(db, purchase_batch_id)
 
-    current = await calculate_remaining_stock(db, purchase_batch_id)
-
-    if event_type == "roast_consumption" and required_grams > current:
-        raise InsufficientInventoryException(
-            available_grams=current, required_grams=required_grams
-        )
-
-    new_balance = current - required_grams if event_type == "roast_consumption" else current + required_grams
-
-    # Record ledger entry
     entry = InventoryLedger(
         purchase_batch_id=purchase_batch_id,
         event_type=event_type,
-        change_grams=-required_grams if event_type == "roast_consumption" else required_grams,
-        resulting_grams=new_balance,
+        change_grams=change_grams,
+        resulting_grams=resulting,
         related_entity_type=related_entity_type,
         related_entity_id=related_entity_id,
     )
     db.add(entry)
+    return entry
 
-    return new_balance
+
+async def lock_purchase_batch(
+    db: AsyncSession, purchase_batch_id: str
+) -> PurchaseBatch | None:
+    """Pessimistic lock on a purchase batch row for inventory mutations."""
+    result = await db.execute(
+        select(PurchaseBatch)
+        .where(PurchaseBatch.id == purchase_batch_id)
+        .with_for_update()
+    )
+    return result.scalar_one_or_none()
