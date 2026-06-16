@@ -165,7 +165,7 @@ class InventoryAdjustmentRequest(BaseModel):
 # ============================================================
 class RoastingBatchCreateRequest(BaseModel):
     purchase_batch_id: str
-    planned_at: str
+    planned_at: datetime
     planned_input_weight_grams: int = Field(gt=0)
     target_description: str | None = None
     roast_level: str | None = None

@@ -1,22 +1,25 @@
 """Roasting batches API."""
 import random
+from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter
 
 from ..dependencies import CurrentUserDep, DBSessionDep
 from ...core.exceptions import (
     NotFoundException, ValidationException, InvalidBatchStatusException,
+    ConflictException, RoastingBatchNotCompletedException,
 )
-from ...models.all_models import RoastingBatch
+from ...models.all_models import RoastingBatch, Questionnaire
 from ...repositories.roasting_batches import RoastingBatchRepository
 from ...repositories.purchase_batches import PurchaseBatchRepository
+from ...repositories.questionnaires import QuestionnaireRepository
 from ...services.inventory import (
     calculate_remaining_stock, append_inventory_ledger, lock_purchase_batch,
 )
 from ...services.roasting import compute_batch_completeness, compute_allowed_actions
 from ...schemas.all_schemas import (
     RoastingBatchCreateRequest, BatchCompleteRequest, OutputWeightUpdateRequest,
-    RoastingBatchResponse, BatchCompleteness,
+    RoastingBatchResponse, BatchCompleteness, QuestionnaireCreateResponse,
 )
 
 router = APIRouter(prefix="/roasting-batches", tags=["roasting-batches"])
@@ -27,9 +30,9 @@ BATCH_COLORS = ["#df5b45", "#3478d4", "#1f9d68", "#8b5cc7", "#e5a029", "#d94b4b"
 def _to_batch_response(batch: RoastingBatch) -> RoastingBatchResponse:
     gb_name = None
     pb_label = None
-    if hasattr(batch, "purchase_batch") and batch.purchase_batch:
+    if batch.purchase_batch is not None:
         pb_label = f"PB-{batch.purchase_batch.id[:8]}"
-        if hasattr(batch.purchase_batch, "green_bean") and batch.purchase_batch.green_bean:
+        if batch.purchase_batch.green_bean is not None:
             gb_name = batch.purchase_batch.green_bean.name
 
     return RoastingBatchResponse(
@@ -45,7 +48,7 @@ def _to_batch_response(batch: RoastingBatch) -> RoastingBatchResponse:
         total_time_seconds=batch.total_time_seconds,
         development_time_seconds=batch.development_time_seconds,
         development_ratio_percent=batch.development_ratio_percent,
-        roast_level=batch.roast_level.value if hasattr(batch, 'roast_level') and batch.roast_level else None,
+        roast_level=batch.roast_level.value if batch.roast_level is not None else None,
         target_description=batch.target_description,
         color_tag=batch.color_tag,
         completeness=BatchCompleteness(**compute_batch_completeness(batch)),
@@ -121,7 +124,57 @@ async def create_roasting_batch(
     db.add(batch)
     await db.flush()
 
+    # Re-fetch with eager-loaded relationships to avoid MissingGreenlet
+    batch = await repo.get_detail(batch.id)
     return _to_batch_response(batch)
+
+
+@router.post("/{batch_id}/questionnaires", status_code=201)
+async def create_questionnaire(
+    batch_id: str,
+    db: DBSessionDep = None,
+    _user: CurrentUserDep = None,
+):
+    """Create a new evaluation questionnaire for a completed batch."""
+    repo = RoastingBatchRepository(db)
+    batch = await repo.get_detail(batch_id)
+    if not batch:
+        raise NotFoundException("RoastingBatch", batch_id)
+
+    if batch.status != "completed":
+        raise RoastingBatchNotCompletedException()
+
+    # Check if there's already an open questionnaire
+    q_repo = QuestionnaireRepository(db)
+    existing_open = await q_repo.get_open_for_batch(batch_id)
+    if existing_open:
+        raise ConflictException(
+            code="QUESTIONNAIRE_ALREADY_OPEN",
+            message="该批次已存在进行中的问卷",
+            details={"existing_questionnaire_id": existing_open.id},
+        )
+
+    from ...services.questionnaire import generate_share_code, generate_share_url
+    share_code = generate_share_code()
+
+    q = Questionnaire(
+        roasting_batch_id=batch_id,
+        status="open",
+        share_code=share_code,
+        share_url=generate_share_url(share_code),
+        created_at=datetime.now(timezone.utc),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+    )
+    db.add(q)
+    await db.flush()
+
+    return QuestionnaireCreateResponse(
+        id=q.id,
+        status=q.status,
+        share_code=q.share_code,
+        share_url=q.share_url or "",
+        expires_at=q.expires_at.isoformat() if q.expires_at else None,
+    )
 
 
 @router.get("/{batch_id}")
@@ -192,6 +245,8 @@ async def complete_batch(
     )
     await db.flush()
 
+    # Re-fetch with eager-loaded relationships to avoid MissingGreenlet
+    batch = await repo.get_detail(batch.id)
     return _to_batch_response(batch)
 
 
@@ -239,6 +294,8 @@ async def reopen_batch(
     )
     await db.flush()
 
+    # Re-fetch with eager-loaded relationships to avoid MissingGreenlet
+    batch = await repo.get_detail(batch.id)
     return _to_batch_response(batch)
 
 
@@ -284,6 +341,8 @@ async def void_batch(
         batch.status = "voided"
         await db.flush()
 
+    # Re-fetch with eager-loaded relationships to avoid MissingGreenlet
+    batch = await repo.get_detail(batch.id)
     return _to_batch_response(batch)
 
 
@@ -319,4 +378,7 @@ async def update_output_weight(
         )
 
     await db.flush()
+
+    # Re-fetch with eager-loaded relationships to avoid MissingGreenlet
+    batch = await repo.get_detail(batch.id)
     return _to_batch_response(batch)

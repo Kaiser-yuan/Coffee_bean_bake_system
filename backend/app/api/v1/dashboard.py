@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 from ..dependencies import DBSessionDep, CurrentUserDep
 from ...models.all_models import (
     RoastingBatch, PurchaseBatch, GreenBean, StandardTerm,
+    RoastingCurve, Questionnaire, BatchReview,
 )
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
@@ -18,11 +19,15 @@ async def get_dashboard(
     _user: CurrentUserDep = None,
 ):
     """Get annual dashboard data."""
-    # All completed batches in the year
+    # All completed batches in the year — eager load all needed relationships
     result = await db.execute(
         select(RoastingBatch)
         .options(
-            selectinload(RoastingBatch.purchase_batch).selectinload(PurchaseBatch.green_bean),
+            selectinload(RoastingBatch.purchase_batch).selectinload(PurchaseBatch.green_bean).selectinload(GreenBean.variety),
+            selectinload(RoastingBatch.purchase_batch).selectinload(PurchaseBatch.green_bean).selectinload(GreenBean.process),
+            selectinload(RoastingBatch.active_curve),
+            selectinload(RoastingBatch.questionnaires),
+            selectinload(RoastingBatch.review),
         )
         .where(
             RoastingBatch.status == "completed",
@@ -69,7 +74,8 @@ async def get_dashboard(
     variety_map: dict[str, int] = {}
     for b in completed_batches:
         variety = "其他"
-        if b.purchase_batch and b.purchase_batch.green_bean and b.purchase_batch.green_bean.variety:
+        if (b.purchase_batch is not None and b.purchase_batch.green_bean is not None
+                and b.purchase_batch.green_bean.variety is not None):
             variety = b.purchase_batch.green_bean.variety.value
         variety_map[variety] = variety_map.get(variety, 0) + 1
     variety_dist = [{"name": k, "count": v} for k, v in variety_map.items()]
@@ -78,7 +84,8 @@ async def get_dashboard(
     region_map: dict[str, int] = {}
     for b in completed_batches:
         region = "其他"
-        if b.purchase_batch and b.purchase_batch.green_bean and b.purchase_batch.green_bean.region:
+        if (b.purchase_batch is not None and b.purchase_batch.green_bean is not None
+                and b.purchase_batch.green_bean.region):
             region = b.purchase_batch.green_bean.region
         region_map[region] = region_map.get(region, 0) + 1
     region_dist = [{"name": k, "count": v} for k, v in region_map.items()]
@@ -87,7 +94,8 @@ async def get_dashboard(
     result = await db.execute(
         select(RoastingBatch)
         .options(
-            selectinload(RoastingBatch.purchase_batch).selectinload(PurchaseBatch.green_bean),
+            selectinload(RoastingBatch.purchase_batch).selectinload(PurchaseBatch.green_bean).selectinload(GreenBean.variety),
+            selectinload(RoastingBatch.purchase_batch).selectinload(PurchaseBatch.green_bean).selectinload(GreenBean.process),
         )
         .where(RoastingBatch.status == "planned")
         .order_by(RoastingBatch.created_at.desc())
@@ -98,7 +106,7 @@ async def get_dashboard(
     pending_groups: dict[str, dict] = {}
     for b in pending_batches:
         gb = None
-        if b.purchase_batch and b.purchase_batch.green_bean:
+        if b.purchase_batch is not None and b.purchase_batch.green_bean is not None:
             gb = b.purchase_batch.green_bean
         bean_id = gb.id if gb else "unknown"
         if bean_id not in pending_groups:
@@ -125,8 +133,8 @@ async def get_dashboard(
         {
             "id": b.id,
             "roasted_at": b.roasted_at.isoformat() if b.roasted_at else None,
-            "green_bean_name": b.purchase_batch.green_bean.name if b.purchase_batch and b.purchase_batch.green_bean else None,
-            "variety": b.purchase_batch.green_bean.variety.value if b.purchase_batch and b.purchase_batch.green_bean and b.purchase_batch.green_bean.variety else None,
+            "green_bean_name": b.purchase_batch.green_bean.name if b.purchase_batch is not None and b.purchase_batch.green_bean is not None else None,
+            "variety": b.purchase_batch.green_bean.variety.value if b.purchase_batch is not None and b.purchase_batch.green_bean is not None and b.purchase_batch.green_bean.variety is not None else None,
             "actual_input_weight_grams": b.actual_input_weight_grams,
             "output_weight_grams": b.output_weight_grams,
             "weight_loss_percent": b.weight_loss_percent,
@@ -135,22 +143,22 @@ async def get_dashboard(
         for b in completed_batches[:8]
     ]
 
-    # Pending actions count
+    # Pending actions count — use eager-loaded relationships directly
     pending_actions = {
         "missing_output_weight": sum(
             1 for b in completed_batches if b.output_weight_grams is None
         ),
         "missing_curve": sum(
             1 for b in completed_batches
-            if not (hasattr(b, "active_curve") and b.active_curve)
+            if b.active_curve is None
         ),
         "missing_evaluation": sum(
             1 for b in completed_batches
-            if not (hasattr(b, "questionnaires") and b.questionnaires)
+            if not b.questionnaires or all(q.submission_count == 0 for q in b.questionnaires)
         ),
         "missing_review": sum(
             1 for b in completed_batches
-            if not (hasattr(b, "review") and b.review and b.review.comprehensive_review)
+            if b.review is None or b.review.comprehensive_review is None
         ),
     }
 

@@ -25,8 +25,8 @@ def _gb_to_response(gb: GreenBean) -> dict:
     return GreenBeanResponse(
         id=gb.id,
         name=gb.name,
-        variety=gb.variety.value if gb.variety else None,
-        process=gb.process.value if gb.process else None,
+        variety=gb.variety.value if gb.variety is not None else None,
+        process=gb.process.value if gb.process is not None else None,
         region=gb.region,
         country=gb.country,
         farm=gb.farm,

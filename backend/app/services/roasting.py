@@ -11,25 +11,23 @@ def compute_batch_completeness(batch: RoastingBatch) -> dict:
 
     missing_evaluation is determined by whether the batch
     actually has evaluation submissions, not just a questionnaire.
+
+    IMPORTANT: Caller MUST eager-load active_curve, curve_files, questionnaires, review
+    before passing batch to this function.
     """
-    has_curve = False
-    if hasattr(batch, "active_curve") and batch.active_curve:
-        has_curve = True
-    elif hasattr(batch, "curve_files") and batch.curve_files:
-        has_curve = any(
-            f.parse_status == "parsed" for f in batch.curve_files
-            if hasattr(f, "parse_status")
-        )
+    has_curve = batch.active_curve is not None or any(
+        f.parse_status == "parsed" for f in (batch.curve_files or [])
+    )
 
     has_evaluation = False
-    if hasattr(batch, "questionnaires") and batch.questionnaires:
+    if batch.questionnaires:
         for q in batch.questionnaires:
             if q.submission_count > 0:
                 has_evaluation = True
                 break
 
     has_review = False
-    if hasattr(batch, "review") and batch.review:
+    if batch.review is not None:
         r = batch.review
         has_review = r.comprehensive_review is not None
 

@@ -69,6 +69,17 @@ async def parse_and_activate_curve(
     # Compute AUC
     auc_val = compute_auc(parsed.points)
 
+    # Include AUC, warnings, and parser version in the stages JSON
+    stages_with_analysis = {
+        "data": stages,
+        "analysis": {
+            "auc_bt_above_100": auc_val,
+            "warnings": parsed.warnings,
+            "parser_version": "kl_v1.0",
+            "calculation_version": "curve-analysis-v1",
+        },
+    }
+
     # Extract key event times
     events_by_type = {e.event_type: e for e in parsed.events}
     charge = events_by_type.get("charge")
@@ -123,7 +134,7 @@ async def parse_and_activate_curve(
         existing_curve.development_ratio_percent = dev_ratio
         existing_curve.points = {"data": points_data}
         existing_curve.events = {"data": events_data}
-        existing_curve.stages = {"data": stages}
+        existing_curve.stages = stages_with_analysis
         existing_curve.control_changes = {"data": control_changes}
         existing_curve.calculation_version = "curve-analysis-v1"
         curve = existing_curve
@@ -150,7 +161,7 @@ async def parse_and_activate_curve(
             development_ratio_percent=dev_ratio,
             points={"data": points_data},
             events={"data": events_data},
-            stages={"data": stages},
+            stages=stages_with_analysis,
             control_changes={"data": control_changes},
             calculation_version="curve-analysis-v1",
         )
@@ -180,14 +191,22 @@ def build_curve_response(curve: RoastingCurve) -> dict:
     """Build a full curve response from the stored curve data."""
     points = curve.points.get("data", []) if curve.points else []
     events_raw = curve.events.get("data", []) if curve.events else []
-    stages = curve.stages.get("data", []) if curve.stages else []
+    stages_raw = curve.stages if curve.stages else {}
+    stages = stages_raw.get("data", []) if isinstance(stages_raw, dict) else stages_raw
     control_changes = curve.control_changes.get("data", []) if curve.control_changes else []
+
+    # Extract analysis metadata from stages JSON
+    analysis = stages_raw.get("analysis", {}) if isinstance(stages_raw, dict) else {}
+    auc_val = analysis.get("auc_bt_above_100")
+    parser_warnings = analysis.get("warnings", [])
+    parser_version = analysis.get("parser_version")
+    calculation_version = analysis.get("calculation_version", curve.calculation_version)
 
     return {
         "curve_file": {
-            "id": curve.curve_file.id if hasattr(curve, 'curve_file') and curve.curve_file else None,
-            "original_filename": curve.curve_file.original_filename if hasattr(curve, 'curve_file') and curve.curve_file else None,
-            "parse_status": curve.curve_file.parse_status if hasattr(curve, 'curve_file') and curve.curve_file else None,
+            "id": curve.curve_file.id if curve.curve_file is not None else None,
+            "original_filename": curve.curve_file.original_filename if curve.curve_file is not None else None,
+            "parse_status": curve.curve_file.parse_status if curve.curve_file is not None else None,
         },
         "summary": {
             "preheat_temp_celsius": curve.preheat_temp_celsius,
@@ -197,11 +216,17 @@ def build_curve_response(curve: RoastingCurve) -> dict:
             "drying_time_seconds": curve.drying_time_seconds,
             "maillard_time_seconds": curve.maillard_time_seconds,
             "drop_temp_celsius": _get_drop_temp(events_raw, points),
+            "auc_bt_above_100": auc_val,
         },
         "events": events_raw,
         "points": points,
         "stages": stages,
         "control_changes": control_changes,
+        "analysis": {
+            "warnings": parser_warnings,
+            "parser_version": parser_version,
+            "calculation_version": calculation_version,
+        },
     }
 
 

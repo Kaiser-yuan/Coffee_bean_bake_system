@@ -1,71 +1,19 @@
-"""Questionnaire API — creation, management, and public access."""
-from datetime import datetime, timezone, timedelta
+"""Questionnaire API — management and public access."""
+from datetime import datetime, timezone
 
 from fastapi import APIRouter
-from sqlalchemy import select
 
 from ..dependencies import DBSessionDep, CurrentUserDep
 from ...core.exceptions import (
     NotFoundException, ValidationException, ConflictException,
-    RoastingBatchNotCompletedException, QuestionnaireClosedException,
-    QuestionnaireExpiredException,
+    QuestionnaireClosedException, QuestionnaireExpiredException,
 )
-from ...models.all_models import RoastingBatch, Questionnaire
 from ...repositories.questionnaires import QuestionnaireRepository
 from ...schemas.all_schemas import (
-    QuestionnaireResponse, QuestionnaireCreateResponse,
+    QuestionnaireResponse,
 )
 
 router = APIRouter(prefix="/questionnaires", tags=["questionnaires"])
-
-
-@router.post("/roasting-batches/{batch_id}/questionnaires", status_code=201)
-async def create_questionnaire(
-    batch_id: str,
-    db: DBSessionDep = None,
-    _user: CurrentUserDep = None,
-):
-    """Create a new evaluation questionnaire for a completed batch."""
-    # Validate batch is completed
-    result = await db.execute(select(RoastingBatch).where(RoastingBatch.id == batch_id))
-    batch = result.scalar_one_or_none()
-    if not batch:
-        raise NotFoundException("RoastingBatch", batch_id)
-
-    if batch.status != "completed":
-        raise RoastingBatchNotCompletedException()
-
-    # Check if there's already an open questionnaire
-    q_repo = QuestionnaireRepository(db)
-    existing_open = await q_repo.get_open_for_batch(batch_id)
-    if existing_open:
-        raise ConflictException(
-            code="QUESTIONNAIRE_ALREADY_OPEN",
-            message="该批次已存在进行中的问卷",
-            details={"existing_questionnaire_id": existing_open.id},
-        )
-
-    from ...services.questionnaire import generate_share_code, generate_share_url
-    share_code = generate_share_code()
-
-    q = Questionnaire(
-        roasting_batch_id=batch_id,
-        status="open",
-        share_code=share_code,
-        share_url=generate_share_url(share_code),
-        created_at=datetime.now(timezone.utc),
-        expires_at=datetime.now(timezone.utc) + timedelta(days=30),
-    )
-    db.add(q)
-    await db.flush()
-
-    return QuestionnaireCreateResponse(
-        id=q.id,
-        status=q.status,
-        share_code=q.share_code,
-        share_url=q.share_url or "",
-        expires_at=q.expires_at.isoformat() if q.expires_at else None,
-    )
 
 
 @router.get("")
@@ -181,8 +129,8 @@ async def get_public_questionnaire(
     batch = await batch_repo.get_detail(q.roasting_batch_id)
 
     green_bean_name = None
-    if batch and hasattr(batch, "purchase_batch") and batch.purchase_batch:
-        if hasattr(batch.purchase_batch, "green_bean") and batch.purchase_batch.green_bean:
+    if batch is not None and batch.purchase_batch is not None:
+        if batch.purchase_batch.green_bean is not None:
             green_bean_name = batch.purchase_batch.green_bean.name
 
     return {

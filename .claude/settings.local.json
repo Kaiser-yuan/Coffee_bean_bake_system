@@ -43,7 +43,16 @@
       "Bash(ls backend/.env)",
       "Bash(ls backend/alembic/versions/)",
       "Bash(docker ps *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(ssh -T -o ConnectTimeout=10 git@github.com)",
+      "Bash(echo \"SSH exit code: $?\")",
+      "Bash(ssh -T -o StrictHostKeyChecking=no -o ConnectTimeout=10 git@github.com)",
+      "Bash(docker --version)",
+      "Bash(docker compose *)",
+      "Bash(npm --version)",
+      "Bash(wsl --list --verbose)",
+      "Bash(dism.exe /online /get-featureinfo /featurename:Microsoft-Windows-Subsystem-Linux)",
+      "Bash(python *)"
     ]
   }
 }
