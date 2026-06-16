@@ -52,7 +52,9 @@
       "Bash(npm --version)",
       "Bash(wsl --list --verbose)",
       "Bash(dism.exe /online /get-featureinfo /featurename:Microsoft-Windows-Subsystem-Linux)",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(uv run *)",
+      "Bash(npm.cmd run *)"
     ]
   }
 }

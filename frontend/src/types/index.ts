@@ -6,7 +6,7 @@
 
 // ---------- 枚举与常量 ----------
 
-export type BeanProcess = '水洗' | '日晒' | '蜜处理' | '厌氧发酵' | '半水洗' | '其他'
+export type BeanProcess = '水洗' | '日晒' | '蜜处理' | '厌氧发酵' | '半水洗' | '湿刨法' | '其他'
 export type RoastLevel = '浅烘' | '中浅烘' | '中烘' | '中深烘' | '深烘'
 export type BatchStatus = 'planned' | 'completed' | 'voided'
 export type CurveStatus = 'none' | 'parsed' | 'error'
@@ -27,7 +27,7 @@ export type BatchDataCompleteness = {
   isComplete: boolean
 }
 
-export const BEAN_PROCESSES: BeanProcess[] = ['水洗', '日晒', '蜜处理', '厌氧发酵', '半水洗', '其他']
+export const BEAN_PROCESSES: BeanProcess[] = ['水洗', '日晒', '蜜处理', '厌氧发酵', '半水洗', '湿刨法', '其他']
 export const ROAST_LEVELS: RoastLevel[] = ['浅烘', '中浅烘', '中烘', '中深烘', '深烘']
 export const BATCH_STATUS_LABELS: Record<BatchStatus, string> = { planned: '待烘', completed: '已完成', voided: '已作废' }
 export const CURVE_STATUS_LABELS: Record<CurveStatus, string> = { none: '无曲线', parsed: '已解析', error: '解析失败' }
@@ -46,7 +46,7 @@ export const REGION_OPTIONS = [
 
 export const VARIETY_OPTIONS = [
   '铁皮卡', '波旁', '卡杜拉', '卡杜艾', '瑰夏', 'SL28', 'SL34',
-  '帕卡马拉', '埃塞原生种', '卡蒂姆', '新世界', '黄波旁',
+  '帕卡马拉', '埃塞俄比亚原生种', '卡蒂姆', '新世界', '黄波旁',
 ]
 
 export const FLAVOR_TAGS = [

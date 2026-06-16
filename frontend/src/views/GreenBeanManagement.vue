@@ -298,10 +298,18 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { isDemoMode, ApiError } from '../api/http'
+import * as greenBeanApi from '../api/greenBeans'
+import * as roastingBatchApi from '../api/roastingBatches'
 import {
   mockGreenBeans, mockPurchaseBatches, mockRoastingBatches,
   apiCreateGreenBean, apiCreatePurchaseBatch, apiCreateRoastingBatch,
 } from '../mock'
+import {
+  toGreenBeanTree, toGreenBeanSuggestion, toGreenBeanWithFirstPurchaseDto,
+} from '../adapters/greenBean'
+import { toPurchaseBatchCreateDto } from '../adapters/purchaseBatch'
+import { toRoastingBatchCreateDto } from '../adapters/roastingBatch'
 import {
   BEAN_PROCESSES, VARIETY_OPTIONS, REGION_OPTIONS,
   BATCH_STATUS_LABELS,
@@ -320,6 +328,11 @@ const expanded = ref(new Set<string>())
 const drawerOpen = ref(false)
 const editMode = ref(false)
 const selectedBeanId = ref('')
+
+// Reactive data arrays (populated from API or mock)
+const greenBeans = ref<GreenBean[]>([])
+const purchaseBatches = ref<PurchaseBatch[]>([])
+const roastingBatches = ref<import('../types').RoastingBatch[]>([])
 
 // 录入表单
 const form = ref({
@@ -352,7 +365,11 @@ const roastForm = ref({
 })
 
 const filteredBeans = computed(() => {
-  let list = [...mockGreenBeans]
+  let list = [...greenBeans.value]
+  if (!isDemoMode) {
+    // Real mode: filtering is done server-side via fetchData params
+    return list
+  }
   if (searchText.value) {
     const q = searchText.value.toLowerCase()
     list = list.filter(b =>
@@ -376,12 +393,12 @@ function toggleExpand(id: string) {
 }
 
 function getPurchaseBatches(beanId: string) {
-  return mockPurchaseBatches.filter(p => p.greenBeanId === beanId)
+  return purchaseBatches.value.filter(p => p.greenBeanId === beanId)
 }
 
 function getRoastingBatches(beanId: string, pbId: string) {
-  return mockRoastingBatches.filter(b => {
-    const pb = mockPurchaseBatches.find(p => p.id === b.purchaseBatchId)
+  return roastingBatches.value.filter(b => {
+    const pb = purchaseBatches.value.find(p => p.id === b.purchaseBatchId)
     return pb?.greenBeanId === beanId && b.purchaseBatchId === pbId
   })
 }
@@ -457,15 +474,27 @@ function resetForm() {
   beanSuggestions.value = []
 }
 
-function onBeanSearch() {
+async function onBeanSearch() {
   if (!form.value.name.trim()) {
     beanSuggestions.value = []
     return
   }
-  const q = form.value.name.toLowerCase()
-  beanSuggestions.value = mockGreenBeans.filter(b =>
-    b.name.toLowerCase().includes(q)
-  ).slice(0, 5)
+
+  if (isDemoMode) {
+    const q = form.value.name.toLowerCase()
+    beanSuggestions.value = mockGreenBeans.filter(b =>
+      b.name.toLowerCase().includes(q)
+    ).slice(0, 5)
+    return
+  }
+
+  try {
+    const matches = await greenBeanApi.matchGreenBeans(form.value.name)
+    beanSuggestions.value = matches.map(toGreenBeanSuggestion)
+  } catch {
+    // Silently fail for suggestions
+    beanSuggestions.value = []
+  }
 }
 
 function selectExistingBean(bean: GreenBean) {
@@ -479,49 +508,73 @@ function selectExistingBean(bean: GreenBean) {
 }
 
 async function onSubmit() {
+  // Step 1: Save
   try {
-    if (editMode.value) {
-      await apiCreatePurchaseBatch({
-        greenBeanId: selectedBeanId.value,
-        purchaseDate: form.value.purchaseDate,
-        totalWeight: form.value.totalWeight,
-        pricePerKg: form.value.pricePerKg,
-        moistureContent: form.value.moistureContent,
-        supplier: form.value.supplier,
-        lotNumber: form.value.lotNumber,
-      })
+    if (isDemoMode) {
+      if (editMode.value) {
+        await apiCreatePurchaseBatch({
+          greenBeanId: selectedBeanId.value,
+          purchaseDate: form.value.purchaseDate,
+          totalWeight: form.value.totalWeight,
+          pricePerKg: form.value.pricePerKg,
+          moistureContent: form.value.moistureContent,
+          supplier: form.value.supplier,
+          lotNumber: form.value.lotNumber,
+        })
+      } else {
+        const bean = await apiCreateGreenBean({
+          name: form.value.name,
+          variety: form.value.variety,
+          process: form.value.process,
+          region: form.value.region,
+          brand: form.value.brand,
+          season: form.value.season,
+          farm: form.value.farm,
+          elevation: form.value.elevation,
+          vendorFlavorDescription: form.value.vendorFlavorDescription,
+        })
+        await apiCreatePurchaseBatch({
+          greenBeanId: bean.id,
+          purchaseDate: form.value.purchaseDate,
+          totalWeight: form.value.totalWeight,
+          pricePerKg: form.value.pricePerKg,
+          moistureContent: form.value.moistureContent,
+          supplier: form.value.supplier,
+          lotNumber: form.value.lotNumber,
+        })
+      }
     } else {
-      const bean = await apiCreateGreenBean({
-        name: form.value.name,
-        variety: form.value.variety,
-        process: form.value.process,
-        region: form.value.region,
-        brand: form.value.brand,
-        season: form.value.season,
-        farm: form.value.farm,
-        elevation: form.value.elevation,
-        vendorFlavorDescription: form.value.vendorFlavorDescription,
-      })
-      await apiCreatePurchaseBatch({
-        greenBeanId: bean.id,
-        purchaseDate: form.value.purchaseDate,
-        totalWeight: form.value.totalWeight,
-        pricePerKg: form.value.pricePerKg,
-        moistureContent: form.value.moistureContent,
-        supplier: form.value.supplier,
-        lotNumber: form.value.lotNumber,
-      })
+      if (editMode.value) {
+        await greenBeanApi.addPurchaseBatch(
+          selectedBeanId.value,
+          toPurchaseBatchCreateDto(form.value),
+        )
+      } else {
+        await greenBeanApi.createGreenBeanWithFirstPurchase(
+          toGreenBeanWithFirstPurchaseDto(form.value),
+        )
+      }
     }
-    closeDrawer()
+  } catch (err) {
+    alert(err instanceof ApiError ? err.message : '保存失败')
+    return
+  }
+
+  // Step 2: Close drawer (save succeeded)
+  closeDrawer()
+
+  // Step 3: Refresh list (may fail separately from save)
+  try {
+    await fetchData()
   } catch {
-    alert('保存失败')
+    alert('保存已成功，但刷新列表失败。请手动刷新页面或清空筛选后重试。')
   }
 }
 
 // ---------- 待烘计划弹窗 ----------
 function openRoastPlan(pb: PurchaseBatch) {
   selectedPbForPlan.value = pb
-  selectedBeanForPlan.value = mockGreenBeans.find(g => g.id === pb.greenBeanId) || null
+  selectedBeanForPlan.value = greenBeans.value.find(g => g.id === pb.greenBeanId) || null
   roastForm.value = {
     plannedDate: new Date().toISOString().split('T')[0],
     beanWeightIn: 500,
@@ -547,25 +600,66 @@ async function onCreateRoastPlan() {
     return
   }
 
-  await apiCreateRoastingBatch({
-    purchaseBatchId: selectedPbForPlan.value.id,
-    plannedDate: roastForm.value.plannedDate,
-    beanWeightIn: roastForm.value.beanWeightIn,
-    targetDescription: roastForm.value.targetDescription,
-    status: 'planned',
-  })
-  roastPlanOpen.value = false
+  try {
+    if (isDemoMode) {
+      await apiCreateRoastingBatch({
+        purchaseBatchId: selectedPbForPlan.value.id,
+        plannedDate: roastForm.value.plannedDate,
+        beanWeightIn: roastForm.value.beanWeightIn,
+        targetDescription: roastForm.value.targetDescription,
+        status: 'planned',
+      })
+    } else {
+      await roastingBatchApi.createRoastingBatch(
+        toRoastingBatchCreateDto({
+          purchaseBatchId: selectedPbForPlan.value.id,
+          plannedDate: roastForm.value.plannedDate,
+          beanWeightIn: roastForm.value.beanWeightIn,
+          targetDescription: roastForm.value.targetDescription,
+        }),
+      )
+    }
+    await fetchData()
+    roastPlanOpen.value = false
+  } catch (err) {
+    alert(err instanceof ApiError ? err.message : '创建失败')
+  }
 }
 
-function onSearch() {}
-function onFilterChange() {}
+async function onSearch() {
+  if (isDemoMode) return
+  await fetchData()
+}
+
+async function onFilterChange() {
+  if (isDemoMode) return
+  await fetchData()
+}
 
 async function fetchData() {
   loading.value = true
   error.value = false
   try {
-    await new Promise(r => setTimeout(r, 200))
-  } catch {
+    if (isDemoMode) {
+      greenBeans.value = [...mockGreenBeans]
+      purchaseBatches.value = [...mockPurchaseBatches]
+      roastingBatches.value = [...mockRoastingBatches]
+      return
+    }
+
+    const tree = await greenBeanApi.getGreenBeanTree({
+      search: searchText.value || undefined,
+      variety: filters.value.variety || undefined,
+      process: filters.value.process || undefined,
+      region: filters.value.region || undefined,
+    })
+
+    const mapped = toGreenBeanTree(tree)
+    greenBeans.value = mapped.greenBeans
+    purchaseBatches.value = mapped.purchaseBatches
+    roastingBatches.value = mapped.roastingBatches
+  } catch (err) {
+    console.error('Failed to fetch green bean tree:', err)
     error.value = true
   } finally {
     loading.value = false

@@ -144,6 +144,33 @@ class PurchaseBatchResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class RoastingBatchTreeResponse(BaseModel):
+    id: str
+    purchase_batch_id: str
+    status: str
+    planned_at: str | None = None
+    roasted_at: str | None = None
+    planned_input_weight_grams: int
+    actual_input_weight_grams: int | None = None
+    output_weight_grams: int | None = None
+    weight_loss_percent: float | None = None
+    total_time_seconds: int | None = None
+    development_time_seconds: int | None = None
+    development_ratio_percent: float | None = None
+    target_description: str | None = None
+    color_tag: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class PurchaseBatchTreeResponse(PurchaseBatchResponse):
+    roasting_batches: list[RoastingBatchTreeResponse] = []
+
+
+class GreenBeanTreeResponse(GreenBeanResponse):
+    purchase_batches: list[PurchaseBatchTreeResponse] = []
+
+
 class InventoryLedgerResponse(BaseModel):
     id: str
     event_type: str

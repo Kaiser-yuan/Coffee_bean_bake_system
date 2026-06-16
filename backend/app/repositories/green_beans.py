@@ -3,7 +3,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ..models.all_models import GreenBean, PurchaseBatch, RoastingBatch
+from ..models.all_models import GreenBean, PurchaseBatch, RoastingBatch, StandardTerm
 from .base import BaseRepository
 
 
@@ -13,6 +13,7 @@ class GreenBeanRepository(BaseRepository[GreenBean]):
     async def search_by_name(self, query: str, limit: int = 5) -> list[GreenBean]:
         stmt = (
             select(GreenBean)
+            .options(selectinload(GreenBean.process))
             .where(GreenBean.name.ilike(f"%{query}%"))
             .limit(limit)
         )
@@ -26,9 +27,15 @@ class GreenBeanRepository(BaseRepository[GreenBean]):
         process: str | None = None,
         region: str | None = None,
     ) -> list[GreenBean]:
-        stmt = select(GreenBean).options(
-            selectinload(GreenBean.purchase_batches).selectinload(PurchaseBatch.green_bean),
-        ).order_by(GreenBean.name)
+        stmt = (
+            select(GreenBean)
+            .options(
+                selectinload(GreenBean.variety),
+                selectinload(GreenBean.process),
+                selectinload(GreenBean.purchase_batches).selectinload(PurchaseBatch.supplier),
+            )
+            .order_by(GreenBean.name)
+        )
 
         if search:
             stmt = stmt.where(
@@ -37,9 +44,9 @@ class GreenBeanRepository(BaseRepository[GreenBean]):
                 GreenBean.region.ilike(f"%{search}%")
             )
         if variety:
-            stmt = stmt.where(GreenBean.variety_term_id == variety)
+            stmt = stmt.where(GreenBean.variety.has(StandardTerm.value == variety))
         if process:
-            stmt = stmt.where(GreenBean.process_term_id == process)
+            stmt = stmt.where(GreenBean.process.has(StandardTerm.value == process))
         if region:
             stmt = stmt.where(GreenBean.region == region)
 
