@@ -22,13 +22,22 @@
       <section class="settings-section">
         <h3 class="section-title">标准词表管理</h3>
         <p class="text-sm text-tertiary mb-md">
-          已使用的词条只能停用，不能删除。停用后不再出现在录入选项中，但仍会在历史记录中正确显示。
+          {{ isDemoMode ? '当前为演示模式，修改只影响前端内存。' : '当前为真实 API 模式，修改会写入本地 PostgreSQL。' }}
         </p>
+
+        <div v-if="loading" class="state-box">正在加载标准词表…</div>
+        <div v-else-if="errorMessage" class="state-box error">
+          {{ errorMessage }}
+          <button class="retry-btn" @click="loadTerms">重试</button>
+        </div>
 
         <div class="term-categories">
           <div v-for="cat in termCategories" :key="cat.key" class="term-cat">
             <h4 class="cat-title">{{ cat.label }}</h4>
-            <div class="term-table">
+            <div v-if="getTermsByCategory(cat.key).length === 0" class="empty-terms">
+              暂无词条
+            </div>
+            <div v-else class="term-table">
               <div
                 v-for="term in getTermsByCategory(cat.key)"
                 :key="term.id"
@@ -41,9 +50,9 @@
                   <input
                     type="checkbox"
                     :checked="term.active"
-                    :disabled="term.usageCount > 0 && term.active"
+                    :disabled="savingTermId === term.id"
                     @change="toggleTerm(term)"
-                    :title="term.usageCount > 0 && term.active ? '已有使用记录，只能停用' : ''"
+                    :title="savingTermId === term.id ? '正在保存' : ''"
                   />
                   <span class="toggle-slider"></span>
                 </label>
@@ -116,12 +125,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
-import { mockTerms } from '../mock'
+import { onMounted, ref } from 'vue'
+import { ApiError, isDemoMode } from '../api/http'
+import * as termsApi from '../api/terms'
+import { toStandardTerm } from '../adapters/term'
+import { apiGetTerms, apiUpdateTerm } from '../mock'
 import type { StandardTerm } from '../types'
 import EmptyState from '../components/common/EmptyState.vue'
 
 const activeTab = ref('terms')
+const terms = ref<StandardTerm[]>([])
+const loading = ref(false)
+const savingTermId = ref('')
+const errorMessage = ref('')
 
 const tabs = [
   { key: 'terms', label: '标准词表' },
@@ -142,13 +158,50 @@ const termCategories = [
 ]
 
 function getTermsByCategory(cat: string) {
-  return mockTerms.filter(t => t.category === cat)
+  return terms.value.filter(t => t.category === cat)
 }
 
-function toggleTerm(term: StandardTerm) {
-  if (term.usageCount > 0 && term.active) return
-  term.active = !term.active
+async function loadTerms() {
+  loading.value = true
+  errorMessage.value = ''
+  try {
+    if (isDemoMode) {
+      terms.value = await apiGetTerms()
+    } else {
+      const dtos = await termsApi.listAdminTerms()
+      terms.value = dtos.map(toStandardTerm)
+    }
+  } catch (error) {
+    errorMessage.value = error instanceof ApiError
+      ? error.message
+      : '标准词表加载失败'
+  } finally {
+    loading.value = false
+  }
 }
+
+async function toggleTerm(term: StandardTerm) {
+  const nextActive = !term.active
+  savingTermId.value = term.id
+  errorMessage.value = ''
+  try {
+    if (isDemoMode) {
+      const updated = await apiUpdateTerm(term.id, { active: nextActive })
+      Object.assign(term, updated)
+    } else {
+      const dto = await termsApi.updateTerm(term.id, { is_active: nextActive })
+      Object.assign(term, toStandardTerm(dto))
+    }
+  } catch (error) {
+    errorMessage.value = error instanceof ApiError
+      ? error.message
+      : '词条保存失败'
+  } finally {
+    savingTermId.value = ''
+  }
+}
+
+onMounted(loadTerms)
 </script>
 
 <style scoped>
@@ -202,6 +255,30 @@ function toggleTerm(term: StandardTerm) {
 
 .mb-md { margin-bottom: var(--sp-3); }
 
+.state-box {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--sp-3);
+  margin-bottom: var(--sp-4);
+  color: var(--text-secondary);
+  background: var(--surface-subtle);
+}
+
+.state-box.error {
+  color: var(--danger);
+  background: var(--danger-subtle);
+  border-color: rgba(217, 75, 75, 0.3);
+}
+
+.retry-btn {
+  margin-left: var(--sp-3);
+  border: 1px solid var(--border-default);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--sp-2);
+  cursor: pointer;
+}
+
 /* Term categories */
 .term-categories {
   display: flex;
@@ -222,6 +299,12 @@ function toggleTerm(term: StandardTerm) {
   display: flex;
   flex-wrap: wrap;
   gap: var(--sp-2);
+}
+
+.empty-terms {
+  color: var(--text-tertiary);
+  font-size: var(--fs-sm);
+  padding: var(--sp-2) 0;
 }
 
 .term-row {

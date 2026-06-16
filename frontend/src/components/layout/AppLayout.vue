@@ -54,9 +54,16 @@
           </button>
           <span class="page-title">{{ $route.meta.title || '' }}</span>
         </div>
-        <div class="topbar-right">
-          <span class="demo-badge" title="当前数据为模拟数据，刷新页面后不会保存">演示环境</span>
-          <span class="text-sm text-secondary">烘焙师</span>
+      <div class="topbar-right">
+          <span
+            class="demo-badge"
+            :class="{ real: !isDemoMode }"
+            :title="isDemoMode ? '当前数据为模拟数据，刷新页面后不会保存' : '当前连接本地真实后端 API'"
+          >
+            {{ isDemoMode ? '演示环境' : '真实 API' }}
+          </span>
+          <span class="text-sm text-secondary">{{ auth.displayName || '烘焙师' }}</span>
+          <button v-if="!isDemoMode" class="logout-btn" @click="logout">退出</button>
         </div>
       </header>
       <main class="content">
@@ -71,9 +78,14 @@
 </template>
 
 <script setup lang="ts">
+import { useRouter } from 'vue-router'
+import { isDemoMode } from '../../api/http'
 import { useAppStore } from '../../stores/app'
+import { useAuthStore } from '../../stores/auth'
 
 const app = useAppStore()
+const auth = useAuthStore()
+const router = useRouter()
 
 const mainNavItems = [
   { path: '/dashboard', label: '系统总览', icon: '▦' },
@@ -81,6 +93,11 @@ const mainNavItems = [
   { path: '/roasting', label: '烘焙分析', icon: '◴' },
   { path: '/evaluations', label: '评价管理', icon: '☰' },
 ]
+
+async function logout() {
+  auth.clearAuth()
+  await router.replace('/login')
+}
 </script>
 
 <style scoped>
@@ -260,6 +277,27 @@ const mainNavItems = [
   color: var(--warning);
   border: 1px solid var(--warning);
   white-space: nowrap;
+}
+
+.demo-badge.real {
+  background: var(--success-subtle);
+  color: var(--success);
+  border-color: var(--success);
+}
+
+.logout-btn {
+  border: 1px solid var(--border-default);
+  background: var(--surface);
+  color: var(--text-secondary);
+  border-radius: var(--radius-md);
+  height: 28px;
+  padding: 0 var(--sp-3);
+  cursor: pointer;
+}
+
+.logout-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
 }
 
 .content {

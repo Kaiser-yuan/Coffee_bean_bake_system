@@ -1,5 +1,7 @@
 import { createRouter, createWebHashHistory } from 'vue-router'
 import type { RouteRecordRaw } from 'vue-router'
+import { isDemoMode } from '../api/http'
+import { useAuthStore } from '../stores/auth'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -14,57 +16,63 @@ const routes: RouteRecordRaw[] = [
         path: 'dashboard',
         name: 'dashboard',
         component: () => import('../views/Dashboard.vue'),
-        meta: { title: '系统总览' },
+        meta: { title: '系统总览', requiresAuth: true },
       },
       {
         path: 'green-beans',
         name: 'green-beans',
         component: () => import('../views/GreenBeanManagement.vue'),
-        meta: { title: '生豆管理' },
+        meta: { title: '生豆管理', requiresAuth: true },
       },
       {
         path: 'roasting',
         name: 'roasting',
         component: () => import('../views/RoastingBatchList.vue'),
-        meta: { title: '烘焙分析' },
+        meta: { title: '烘焙分析', requiresAuth: true },
       },
       {
         path: 'curve/:batchId',
         name: 'curve-single',
         component: () => import('../views/CurveAnalysis.vue'),
-        meta: { title: '曲线分析' },
+        meta: { title: '曲线分析', requiresAuth: true },
       },
       {
         path: 'curve/compare/:ids',
         name: 'curve-compare',
         component: () => import('../views/CurveAnalysis.vue'),
-        meta: { title: '多锅对比' },
+        meta: { title: '多锅对比', requiresAuth: true },
       },
       {
         path: 'review/:batchId',
         name: 'batch-review',
         component: () => import('../views/BatchReview.vue'),
-        meta: { title: '批次复盘' },
+        meta: { title: '批次复盘', requiresAuth: true },
       },
       {
         path: 'evaluations',
         name: 'evaluations',
         component: () => import('../views/EvaluationManagement.vue'),
-        meta: { title: '评价管理' },
+        meta: { title: '评价管理', requiresAuth: true },
       },
       {
         path: 'evaluations/:questionnaireId',
         name: 'evaluation-detail',
         component: () => import('../views/EvaluationDetail.vue'),
-        meta: { title: '评价详情' },
+        meta: { title: '评价详情', requiresAuth: true },
       },
       {
         path: 'settings',
         name: 'settings',
         component: () => import('../views/Settings.vue'),
-        meta: { title: '系统设置' },
+        meta: { title: '系统设置', requiresAuth: true },
       },
     ],
+  },
+  {
+    path: '/login',
+    name: 'login',
+    component: () => import('../views/Login.vue'),
+    meta: { title: '登录' },
   },
   {
     path: '/eval/:shareCode',
@@ -77,6 +85,21 @@ const routes: RouteRecordRaw[] = [
 const router = createRouter({
   history: createWebHashHistory(),
   routes,
+})
+
+router.beforeEach((to) => {
+  const auth = useAuthStore()
+
+  if (to.name === 'login' && auth.isAuthenticated) {
+    return '/dashboard'
+  }
+
+  if (!isDemoMode && to.meta.requiresAuth && !auth.isAuthenticated) {
+    return {
+      path: '/login',
+      query: { redirect: to.fullPath },
+    }
+  }
 })
 
 router.afterEach((to) => {
