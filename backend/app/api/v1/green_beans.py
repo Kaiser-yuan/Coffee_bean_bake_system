@@ -55,6 +55,9 @@ def _rb_to_tree_response(rb: RoastingBatch) -> RoastingBatchTreeResponse:
         development_ratio_percent=rb.development_ratio_percent,
         target_description=rb.target_description,
         color_tag=rb.color_tag,
+        entry_mode=rb.entry_mode,
+        inventory_effective=rb.inventory_effective,
+        source_note=rb.source_note,
     )
 
 
@@ -63,6 +66,7 @@ def _rb_to_tree_response(rb: RoastingBatch) -> RoastingBatchTreeResponse:
 async def match_green_beans(
     name: str,
     db: DBSessionDep = None,
+    _user: CurrentUserDep = None,
 ):
     """Search existing green beans by name for dedup before creation."""
     repo = GreenBeanRepository(db)
@@ -88,6 +92,7 @@ async def get_green_bean_tree(
     process: str | None = None,
     region: str | None = None,
     db: DBSessionDep = None,
+    _user: CurrentUserDep = None,
 ):
     """Get full tree with stock summary."""
     repo = GreenBeanRepository(db)

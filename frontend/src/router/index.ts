@@ -66,6 +66,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/Settings.vue'),
         meta: { title: '系统设置', requiresAuth: true },
       },
+      {
+        path: 'backfill',
+        name: 'historical-backfill',
+        component: () => import('../views/HistoricalBackfill.vue'),
+        meta: { title: '历史数据补录', requiresAuth: true },
+      },
     ],
   },
   {

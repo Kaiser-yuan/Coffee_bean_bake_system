@@ -159,6 +159,9 @@ class RoastingBatchTreeResponse(BaseModel):
     development_ratio_percent: float | None = None
     target_description: str | None = None
     color_tag: str | None = None
+    entry_mode: str | None = None
+    inventory_effective: bool | None = None
+    source_note: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -231,6 +234,9 @@ class RoastingBatchResponse(BaseModel):
     roast_level: str | None = None
     target_description: str | None = None
     color_tag: str | None = None
+    entry_mode: str | None = None
+    inventory_effective: bool | None = None
+    source_note: str | None = None
     completeness: BatchCompleteness | None = None
     allowed_actions: list[str] = []
     green_bean_name: str | None = None
@@ -508,3 +514,74 @@ class DashboardResponse(BaseModel):
     pending_groups: list[PendingGroupResponse]
     recent_batches: list[dict]
     pending_actions: dict
+
+
+# ============================================================
+# Bulk Import (multi-CSV roast generation & historical backfill)
+# ============================================================
+class BulkImportPreviewItemSummary(BaseModel):
+    total_time_seconds: float | None = None
+    turning_point_seconds: float | None = None
+    yellowing_seconds: float | None = None
+    first_crack_start_seconds: float | None = None
+    development_ratio_percent: float | None = None
+    auc_bt_above_100: float | None = None
+
+
+class BulkImportPreviewItem(BaseModel):
+    item_id: str
+    filename: str
+    file_hash: str
+    file_size_bytes: int
+    inferred_roasted_at: str | None = None
+    roasted_at_source: str | None = None
+    input_weight_grams: int | None = None
+    output_weight_grams: int | None = None
+    inventory_effective: bool
+    parse_status: str  # parsed | failed
+    parse_error_message: str | None = None
+    summary: dict
+    warnings: list[str] = []
+    is_duplicate: bool = False
+
+
+class BulkImportPreviewResponse(BaseModel):
+    job_id: str
+    purchase_batch_id: str | None = None
+    mode: str
+    inventory_effective_default: bool
+    available_stock_grams: int
+    total_planned_input_grams: int
+    items: list[BulkImportPreviewItem]
+    blocking_errors: list[str] = []
+
+
+class BulkImportCommitItem(BaseModel):
+    item_id: str
+    roasted_at: datetime | None = None
+    actual_input_weight_grams: int | None = None
+    output_weight_grams: int | None = None
+    inventory_effective: bool | None = None
+    source_note: str | None = None
+
+
+class BulkImportCommitRequest(BaseModel):
+    job_id: str
+    items: list[BulkImportCommitItem] = []
+
+
+class BulkImportCommitResultItem(BaseModel):
+    item_id: str
+    filename: str | None = None
+    success: bool
+    roasting_batch_id: str | None = None
+    error_message: str | None = None
+
+
+class BulkImportCommitResponse(BaseModel):
+    job_id: str
+    status: str
+    success_count: int
+    failed_count: int
+    total_consumed_grams: int
+    items: list[BulkImportCommitResultItem]

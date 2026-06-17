@@ -124,3 +124,38 @@ export type RoastingBatchCreateRequestDto = {
   target_description?: string | null
   roast_level?: string | null
 }
+
+export type RoastingBatchResponseDto = {
+  id: string
+  purchase_batch_id: string
+  status: 'planned' | 'completed' | 'voided'
+  planned_at: string | null
+  roasted_at: string | null
+  planned_input_weight_grams: number
+  actual_input_weight_grams: number | null
+  output_weight_grams: number | null
+  weight_loss_percent: number | null
+  total_time_seconds: number | null
+  development_time_seconds: number | null
+  development_ratio_percent: number | null
+  roast_level: string | null
+  target_description: string | null
+  color_tag: string | null
+  entry_mode: string | null
+  inventory_effective: boolean | null
+  source_note: string | null
+  green_bean_name: string | null
+  purchase_batch_label: string | null
+}
+
+export type RoastingBatchListResponseDto = {
+  items: RoastingBatchResponseDto[]
+  page: number
+  page_size: number
+  total: number
+}
+
+export type BatchCompleteRequestDto = {
+  roasted_at: string
+  actual_input_weight_grams: number
+}

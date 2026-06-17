@@ -96,6 +96,14 @@
                     >
                       + 待烘计划
                     </button>
+                    <button
+                      v-if="!isDemoMode"
+                      class="btn btn-xs btn-secondary"
+                      @click.stop="openBulkCsv(pb)"
+                      title="批量 CSV 生成烘焙批次"
+                    >
+                      批量 CSV
+                    </button>
                   </td>
                 </tr>
 
@@ -292,6 +300,15 @@
         </div>
       </div>
     </div>
+
+    <!-- 批量 CSV 生成烘焙批次 -->
+    <BulkCsvImportDialog
+      v-if="!isDemoMode"
+      :open="bulkCsvOpen"
+      :purchase-batch-id="bulkCsvPurchaseBatchId"
+      @committed="onBulkCsvCommitted"
+      @close="closeBulkCsv"
+    />
   </div>
 </template>
 
@@ -318,6 +335,7 @@ import type { GreenBean, PurchaseBatch, BeanProcess } from '../types'
 import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
 import EmptyState from '../components/common/EmptyState.vue'
+import BulkCsvImportDialog from '../components/roasting/BulkCsvImportDialog.vue'
 
 const router = useRouter()
 const loading = ref(false)
@@ -328,6 +346,21 @@ const expanded = ref(new Set<string>())
 const drawerOpen = ref(false)
 const editMode = ref(false)
 const selectedBeanId = ref('')
+
+// 批量 CSV 生成烘焙批次弹窗
+const bulkCsvOpen = ref(false)
+const bulkCsvPurchaseBatchId = ref('')
+
+function openBulkCsv(pb: PurchaseBatch) {
+  bulkCsvPurchaseBatchId.value = pb.id
+  bulkCsvOpen.value = true
+}
+function closeBulkCsv() {
+  bulkCsvOpen.value = false
+}
+async function onBulkCsvCommitted() {
+  await fetchData()
+}
 
 // Reactive data arrays (populated from API or mock)
 const greenBeans = ref<GreenBean[]>([])

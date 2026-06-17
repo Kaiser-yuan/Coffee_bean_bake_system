@@ -69,6 +69,9 @@ async def parse_and_activate_curve(
     # Compute AUC
     auc_val = compute_auc(parsed.points)
 
+    # Stage list (from compute_stage_metrics)
+    stages = stage_data.get("stages", [])
+
     # Include AUC, warnings, and parser version in the stages JSON
     stages_with_analysis = {
         "data": stages,
@@ -100,7 +103,6 @@ async def parse_and_activate_curve(
             dev_ratio = round(dev_time / total_time * 100, 2) if total_time > 0 else None
 
     # Find stage data
-    stages = stage_data.get("stages", [])
     drying_stage = next((s for s in stages if s["name"] == "脱水阶段"), None)
     maillard_stage = next((s for s in stages if s["name"] == "梅纳阶段"), None)
     dev_stage = next((s for s in stages if s["name"] == "发展阶段"), None)

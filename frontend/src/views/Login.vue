@@ -31,7 +31,7 @@
       </form>
 
       <p class="login-hint">
-        本地默认账号：<span class="font-mono">admin / admin123</span>
+        首次使用请在本地后端完成首个管理员账号初始化后再登录。
       </p>
     </section>
   </div>
@@ -47,8 +47,8 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 
-const username = ref('admin')
-const password = ref('admin123')
+const username = ref('')
+const password = ref('')
 const errorMessage = ref('')
 
 const canSubmit = computed(() => username.value.length > 0 && password.value.length > 0)

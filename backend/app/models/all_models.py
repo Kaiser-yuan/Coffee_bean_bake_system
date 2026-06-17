@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text,
-    UniqueConstraint, CheckConstraint, JSON, BigInteger, Enum as SQLEnum,
+    UniqueConstraint, CheckConstraint, JSON, BigInteger, Enum as SQLEnum, true,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID
@@ -164,6 +164,26 @@ class RoastingBatch(Base):
 
     target_description: Mapped[str | None] = mapped_column(Text)
     color_tag: Mapped[str | None] = mapped_column(String(7))
+
+    # Entry / backfill metadata (see bulk import & historical backfill design)
+    entry_mode: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="manual_plan", server_default="manual_plan",
+        comment="manual_plan|manual_completed|csv_bulk_import|historical_backfill",
+    )
+    inventory_effective: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true(),
+        comment="true=影响当前库存；false=仅归档",
+    )
+    roasted_at_source: Mapped[str | None] = mapped_column(
+        String(32),
+        comment="csv_content|filename|file_last_modified|manual|upload_order",
+    )
+    bulk_import_group_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        comment="同一次批量上传的分组 ID（对应 bulk_import_jobs.id）",
+    )
+    source_note: Mapped[str | None] = mapped_column(Text)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     # Status constraints
@@ -403,3 +423,80 @@ class InventoryLedger(Base):
     change_grams: Mapped[int] = mapped_column(Integer, nullable=False)
     resulting_grams: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+# ============================================================
+# 15. bulk_import_jobs — 批量导入任务
+# ============================================================
+class BulkImportJob(Base):
+    """一次批量 CSV 上传（多 CSV 生成烘焙批次 / 历史补录）的导入任务。
+
+    一个 job 包含多个 BulkImportItem；预览阶段落库 job+items，
+    提交阶段据此创建 roasting_batches / curve_files / curves。
+    """
+    __tablename__ = "bulk_import_jobs"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_uuid)
+    purchase_batch_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("purchase_batches.id"), index=True,
+    )
+    mode: Mapped[str] = mapped_column(
+        String(32), nullable=False,
+        comment="csv_bulk_import|historical_backfill",
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="previewed", server_default="previewed",
+        comment="previewed|committed|failed|cancelled",
+    )
+    file_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    default_input_weight_grams: Mapped[int | None] = mapped_column(Integer)
+    inventory_effective_default: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true(),
+    )
+    created_by: Mapped[str | None] = mapped_column(UUID(as_uuid=False))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    items = relationship("BulkImportItem", back_populates="job", cascade="all, delete-orphan")
+
+
+# ============================================================
+# 16. bulk_import_items — 批量导入条目（每个 CSV 一行）
+# ============================================================
+class BulkImportItem(Base):
+    """单个 CSV 在一次批量导入中的预览/提交记录。"""
+    __tablename__ = "bulk_import_items"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=new_uuid)
+    job_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("bulk_import_jobs.id"), nullable=False, index=True,
+    )
+    original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    file_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    client_last_modified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    inferred_roasted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    roasted_at_source: Mapped[str | None] = mapped_column(
+        String(32),
+        comment="csv_content|filename|file_last_modified|manual|upload_order",
+    )
+    display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    parse_status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="parsed", server_default="parsed",
+        comment="parsed|failed",
+    )
+    parse_error_message: Mapped[str | None] = mapped_column(Text)
+    warnings: Mapped[dict | None] = mapped_column(JSON)
+    preview_summary: Mapped[dict | None] = mapped_column(JSON)
+    roasting_batch_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("roasting_batches.id"),
+    )
+    curve_file_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("curve_files.id"),
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    job = relationship("BulkImportJob", back_populates="items")

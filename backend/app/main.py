@@ -58,6 +58,8 @@ async def root():
 # Import and mount routers
 def register_routers() -> None:
     from .api.v1.auth import router as auth_router
+    from .api.v1.backfills import router as backfills_router
+    from .api.v1.bulk_imports import router as bulk_imports_router
     from .api.v1.curves import router as curves_router
     from .api.v1.dashboard import router as dashboard_router
     from .api.v1.evaluations import (
@@ -82,6 +84,8 @@ def register_routers() -> None:
         green_beans_router,
         purchase_batches_router,
         roasting_batches_router,
+        bulk_imports_router,
+        backfills_router,
         curves_router,
         questionnaires_router,
         questionnaires_public_router,

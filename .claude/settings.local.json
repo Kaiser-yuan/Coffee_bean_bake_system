@@ -54,7 +54,15 @@
       "Bash(dism.exe /online /get-featureinfo /featurename:Microsoft-Windows-Subsystem-Linux)",
       "Bash(python *)",
       "Bash(uv run *)",
-      "Bash(npm.cmd run *)"
+      "Bash(npm.cmd run *)",
+      "Bash(./.venv/Scripts/python.exe -c \"import app.main; print\\('IMPORT_OK'\\); print\\([r.path for r in app.main.app.routes if 'bulk' in getattr\\(r,'path',''\\) or 'backfill' in getattr\\(r,'path',''\\)]\\)\")",
+      "Bash(./.venv/Scripts/python.exe -c ' *)",
+      "Bash(./.venv/Scripts/python.exe -c \"import app.main; print\\(len\\(app.main.app.routes\\)\\)\")",
+      "Bash(git stash *)",
+      "Bash(./.venv/Scripts/python.exe -c \"import app.main; print\\('orig:', len\\(app.main.app.routes\\)\\)\")",
+      "Bash(./node_modules/.bin/vue-tsc --noEmit)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(echo \"TSC_EXIT=$?\")"
     ]
   }
 }

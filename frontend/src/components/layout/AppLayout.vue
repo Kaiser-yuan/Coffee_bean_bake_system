@@ -37,7 +37,7 @@
       </div>
 
       <div class="sidebar-footer">
-        <span class="text-xs text-tertiary">v0.2.0 · 演示环境</span>
+        <span class="text-xs text-tertiary">v0.3.0 · {{ isDemoMode ? '演示环境' : '真实 API' }}</span>
       </div>
     </aside>
 
@@ -92,6 +92,7 @@ const mainNavItems = [
   { path: '/green-beans', label: '生豆管理', icon: '◫' },
   { path: '/roasting', label: '烘焙分析', icon: '◴' },
   { path: '/evaluations', label: '评价管理', icon: '☰' },
+  { path: '/backfill', label: '历史补录', icon: '⤓' },
 ]
 
 async function logout() {

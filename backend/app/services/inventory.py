@@ -22,8 +22,12 @@ async def calculate_remaining_stock(
 ) -> int:
     """
     remaining = total_weight_grams
-              - SUM(completed roasting batches actual_input_weight_grams)
+              - SUM(completed, inventory_effective roasting batches actual_input_weight_grams)
               + SUM(inventory adjustments amount_grams)
+
+    Only batches that are both ``completed`` and ``inventory_effective=True``
+    count as consumed — historical backfill / archive-only batches
+    (inventory_effective=False) do not affect current stock.
 
     This is the *fact* calculation — the single source of truth.
     """
@@ -35,12 +39,13 @@ async def calculate_remaining_stock(
     if not pb:
         return 0
 
-    # Sum of completed, non-voided roast batch inputs
+    # Sum of completed, inventory-effective roast batch inputs
     result = await db.execute(
         select(func.coalesce(func.sum(RoastingBatch.actual_input_weight_grams), 0))
         .where(
             RoastingBatch.purchase_batch_id == purchase_batch_id,
             RoastingBatch.status == "completed",
+            RoastingBatch.inventory_effective.is_(True),
         )
     )
     roast_consumed = result.scalar_one()

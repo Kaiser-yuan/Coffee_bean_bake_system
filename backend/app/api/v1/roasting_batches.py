@@ -51,6 +51,9 @@ def _to_batch_response(batch: RoastingBatch) -> RoastingBatchResponse:
         roast_level=batch.roast_level.value if batch.roast_level is not None else None,
         target_description=batch.target_description,
         color_tag=batch.color_tag,
+        entry_mode=batch.entry_mode,
+        inventory_effective=batch.inventory_effective,
+        source_note=batch.source_note,
         completeness=BatchCompleteness(**compute_batch_completeness(batch)),
         allowed_actions=compute_allowed_actions(batch),
         green_bean_name=gb_name,
@@ -125,6 +128,7 @@ async def create_roasting_batch(
     await db.flush()
 
     # Re-fetch with eager-loaded relationships to avoid MissingGreenlet
+    repo = RoastingBatchRepository(db)
     batch = await repo.get_detail(batch.id)
     return _to_batch_response(batch)
 
@@ -234,16 +238,18 @@ async def complete_batch(
     batch.actual_input_weight_grams = body.actual_input_weight_grams
     await db.flush()
 
-    # Record ledger: consumption is negative
-    await append_inventory_ledger(
-        db=db,
-        purchase_batch_id=batch.purchase_batch_id,
-        change_grams=-body.actual_input_weight_grams,
-        event_type="roast_consumption",
-        related_entity_type="roasting_batch",
-        related_entity_id=batch.id,
-    )
-    await db.flush()
+    # Record ledger: consumption is negative.
+    # Archive-only batches (inventory_effective=False) do not affect stock.
+    if batch.inventory_effective:
+        await append_inventory_ledger(
+            db=db,
+            purchase_batch_id=batch.purchase_batch_id,
+            change_grams=-body.actual_input_weight_grams,
+            event_type="roast_consumption",
+            related_entity_type="roasting_batch",
+            related_entity_id=batch.id,
+        )
+        await db.flush()
 
     # Re-fetch with eager-loaded relationships to avoid MissingGreenlet
     batch = await repo.get_detail(batch.id)
@@ -283,16 +289,19 @@ async def reopen_batch(
     batch.weight_loss_percent = None
     await db.flush()
 
-    # Record ledger: return is positive (restoring inventory)
-    await append_inventory_ledger(
-        db=db,
-        purchase_batch_id=batch.purchase_batch_id,
-        change_grams=consumed,
-        event_type="roast_return",
-        related_entity_type="roasting_batch",
-        related_entity_id=batch.id,
-    )
-    await db.flush()
+    # Record ledger: return is positive (restoring inventory).
+    # Archive-only batches (inventory_effective=False) never consumed stock,
+    # so reopening them must not write a return ledger.
+    if batch.inventory_effective:
+        await append_inventory_ledger(
+            db=db,
+            purchase_batch_id=batch.purchase_batch_id,
+            change_grams=consumed,
+            event_type="roast_return",
+            related_entity_type="roasting_batch",
+            related_entity_id=batch.id,
+        )
+        await db.flush()
 
     # Re-fetch with eager-loaded relationships to avoid MissingGreenlet
     batch = await repo.get_detail(batch.id)
@@ -328,15 +337,18 @@ async def void_batch(
         batch.status = "voided"
         await db.flush()
 
-        await append_inventory_ledger(
-            db=db,
-            purchase_batch_id=batch.purchase_batch_id,
-            change_grams=consumed,
-            event_type="roast_return",
-            related_entity_type="roasting_batch",
-            related_entity_id=batch.id,
-        )
-        await db.flush()
+        # Archive-only batches (inventory_effective=False) never consumed stock,
+        # so voiding them must not write a return ledger.
+        if batch.inventory_effective:
+            await append_inventory_ledger(
+                db=db,
+                purchase_batch_id=batch.purchase_batch_id,
+                change_grams=consumed,
+                event_type="roast_return",
+                related_entity_type="roasting_batch",
+                related_entity_id=batch.id,
+            )
+            await db.flush()
     else:
         batch.status = "voided"
         await db.flush()
