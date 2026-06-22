@@ -139,7 +139,7 @@ class PurchaseBatchResponse(BaseModel):
     lot_number: str | None = None
     notes: str | None = None
     remaining_weight_grams: int | None = None
-    allowed_actions: list[str] = []
+    allowed_actions: list[str] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
@@ -167,11 +167,11 @@ class RoastingBatchTreeResponse(BaseModel):
 
 
 class PurchaseBatchTreeResponse(PurchaseBatchResponse):
-    roasting_batches: list[RoastingBatchTreeResponse] = []
+    roasting_batches: list[RoastingBatchTreeResponse] = Field(default_factory=list)
 
 
 class GreenBeanTreeResponse(GreenBeanResponse):
-    purchase_batches: list[PurchaseBatchTreeResponse] = []
+    purchase_batches: list[PurchaseBatchTreeResponse] = Field(default_factory=list)
 
 
 class InventoryLedgerResponse(BaseModel):
@@ -238,7 +238,7 @@ class RoastingBatchResponse(BaseModel):
     inventory_effective: bool | None = None
     source_note: str | None = None
     completeness: BatchCompleteness | None = None
-    allowed_actions: list[str] = []
+    allowed_actions: list[str] = Field(default_factory=list)
     green_bean_name: str | None = None
     purchase_batch_label: str | None = None
 
@@ -316,10 +316,10 @@ class CurveFileResponse(BaseModel):
 class CurveResponse(BaseModel):
     curve_file: CurveFileResponse | None = None
     summary: dict | None = None
-    stages: list[CurveStage] = []
-    events: list[CurveEvent] = []
-    points: list[CurvePoint] = []
-    control_changes: list[CurveControlChange] = []
+    stages: list[CurveStage] = Field(default_factory=list)
+    events: list[CurveEvent] = Field(default_factory=list)
+    points: list[CurvePoint] = Field(default_factory=list)
+    control_changes: list[CurveControlChange] = Field(default_factory=list)
 
 
 class MetricDifference(BaseModel):
@@ -342,11 +342,11 @@ class CurveComparisonWarning(BaseModel):
 class CurveComparisonResponse(BaseModel):
     base_batch_id: str
     align_by: str
-    series: list[dict] = []
-    metric_differences: list[MetricDifference] = []
-    event_time_differences: list[dict] = []
-    warnings: list[CurveComparisonWarning] = []
-    calculation_meta: dict = {}
+    series: list[dict] = Field(default_factory=list)
+    metric_differences: list[MetricDifference] = Field(default_factory=list)
+    event_time_differences: list[dict] = Field(default_factory=list)
+    warnings: list[CurveComparisonWarning] = Field(default_factory=list)
+    calculation_meta: dict = Field(default_factory=dict)
 
 
 # ============================================================
@@ -428,7 +428,7 @@ class EvaluationResponse(BaseModel):
     bitterness_intensity_score: int | None = None
     aftertaste_score: int | None = None
     overall_preference_score: int | None = None
-    flavor_notes: list[str] = []
+    flavor_notes: list[str] = Field(default_factory=list)
     free_notes: str | None = None
     bean_age_days: int | None = None
     submitted_at: str | None = None
@@ -438,7 +438,7 @@ class EvaluationResponse(BaseModel):
 
 class EvaluationStatsResponse(BaseModel):
     dimensions: list[DimensionSummary]
-    top_flavors: list[FlavorFrequency] = []
+    top_flavors: list[FlavorFrequency] = Field(default_factory=list)
     total_submissions: int = 0
 
 
@@ -454,10 +454,10 @@ class ReminderResponse(BaseModel):
 class ReviewOverviewResponse(BaseModel):
     batch: dict | None = None
     review: dict | None = None
-    reminders: list[ReminderResponse] = []
+    reminders: list[ReminderResponse] = Field(default_factory=list)
     evaluation_summary: str | None = None
-    evaluations: list[dict] = []
-    questionnaires: list[dict] = []
+    evaluations: list[dict] = Field(default_factory=list)
+    questionnaires: list[dict] = Field(default_factory=list)
 
 
 class PersonalReviewUpdateRequest(BaseModel):
@@ -541,7 +541,7 @@ class BulkImportPreviewItem(BaseModel):
     parse_status: str  # parsed | failed
     parse_error_message: str | None = None
     summary: dict
-    warnings: list[str] = []
+    warnings: list[str] = Field(default_factory=list)
     is_duplicate: bool = False
 
 
@@ -553,7 +553,7 @@ class BulkImportPreviewResponse(BaseModel):
     available_stock_grams: int
     total_planned_input_grams: int
     items: list[BulkImportPreviewItem]
-    blocking_errors: list[str] = []
+    blocking_errors: list[str] = Field(default_factory=list)
 
 
 class BulkImportCommitItem(BaseModel):
@@ -563,11 +563,6 @@ class BulkImportCommitItem(BaseModel):
     output_weight_grams: int | None = None
     inventory_effective: bool | None = None
     source_note: str | None = None
-
-
-class BulkImportCommitRequest(BaseModel):
-    job_id: str
-    items: list[BulkImportCommitItem] = []
 
 
 class BulkImportCommitResultItem(BaseModel):

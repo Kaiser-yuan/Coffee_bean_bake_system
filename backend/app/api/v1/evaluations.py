@@ -40,13 +40,20 @@ async def submit_evaluation(
     if is_expired(q):
         raise QuestionnaireExpiredException()
 
-    # Resolve brew_method to standard_term
+    from ...repositories.terms import TermRepository
+    term_repo = TermRepository(db)
+
+    # Public forms submit display values. Persist term IDs so reports and
+    # standard-term management stay consistent.
     brew_method_term_id = None
     if body.brew_method:
-        from ...repositories.terms import TermRepository
-        term_repo = TermRepository(db)
         term = await term_repo.get_or_create_value("brew_method", body.brew_method)
         brew_method_term_id = term.id
+
+    flavor_term_ids: list[str] = []
+    for flavor_value in body.flavor_notes:
+        term = await term_repo.get_or_create_value("flavor", flavor_value)
+        flavor_term_ids.append(term.id)
 
     # Calculate bean age
     result = await db.execute(
@@ -73,7 +80,7 @@ async def submit_evaluation(
         bitterness_intensity_score=body.bitterness_intensity_score,
         aftertaste_score=body.aftertaste_score,
         overall_preference_score=body.overall_preference_score,
-        flavor_term_ids=body.flavor_notes,
+        flavor_term_ids=flavor_term_ids,
         free_notes=body.free_notes,
         bean_age_days=bean_age,
         submitted_at=datetime.now(timezone.utc),
@@ -151,11 +158,23 @@ async def get_evaluations_for_questionnaire(
     # Resolve term IDs to display names
     from ...repositories.terms import TermRepository
     term_repo = TermRepository(db)
+    referenced_term_ids = {
+        term_id
+        for evaluation in evaluations
+        for term_id in (
+            [evaluation.brew_method_term_id] if evaluation.brew_method_term_id else []
+        ) + (evaluation.flavor_term_ids or [])
+    }
+    term_names: dict[str, str] = {}
+    for term_id in referenced_term_ids:
+        term = await term_repo.get_by_id(term_id)
+        if term:
+            term_names[term_id] = term.value
+
     top_flavors_items = sorted(flavor_map.items(), key=lambda x: x[1], reverse=True)[:8]
     flavors = []
     for term_id, count in top_flavors_items:
-        term = await term_repo.get_by_id(term_id)
-        name = term.value if term else term_id[:8]
+        name = term_names.get(term_id, term_id[:8])
         flavors.append(FlavorFrequency(name=name, count=count))
 
     return {
@@ -165,7 +184,8 @@ async def get_evaluations_for_questionnaire(
                 questionnaire_id=e.questionnaire_id,
                 evaluator_name=e.evaluator_name,
                 evaluator_type=e.evaluator_type,
-                brew_method=e.brew_method_term_id,
+                brew_method=term_names.get(e.brew_method_term_id, e.brew_method_term_id)
+                if e.brew_method_term_id else None,
                 drink_temperature=e.drink_temperature,
                 drink_form=e.drink_form,
                 dry_fragrance_score=e.dry_fragrance_score,
@@ -175,7 +195,10 @@ async def get_evaluations_for_questionnaire(
                 bitterness_intensity_score=e.bitterness_intensity_score,
                 aftertaste_score=e.aftertaste_score,
                 overall_preference_score=e.overall_preference_score,
-                flavor_notes=e.flavor_term_ids or [],
+                flavor_notes=[
+                    term_names.get(term_id, term_id[:8])
+                    for term_id in (e.flavor_term_ids or [])
+                ],
                 free_notes=e.free_notes,
                 bean_age_days=e.bean_age_days,
                 submitted_at=e.submitted_at.isoformat() if e.submitted_at else None,

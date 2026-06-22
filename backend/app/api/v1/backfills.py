@@ -15,6 +15,7 @@ from ...schemas.all_schemas import (
 )
 from ...services.bulk_import import (
     preview_roast_csv_import, commit_roast_csv_import, UploadedCsv,
+    parse_client_last_modified,
 )
 
 router = APIRouter(prefix="/backfills", tags=["backfills"])
@@ -38,20 +39,23 @@ async def backfill_preview(
     default_roast_date: str | None = Form(None),
     first_roast_time: str | None = Form(None),
     time_inference_strategy: str | None = Form(None),
+    client_last_modified: list[str] = Form(default=[]),
 ):
     """Preview a historical backfill. Defaults to archive-only (no stock effect)."""
     if time_inference_strategy and time_inference_strategy not in _ALLOWED_STRATEGIES:
         raise ValidationException(f"不支持的时间推断策略: {time_inference_strategy}")
 
     uploaded: list[UploadedCsv] = []
-    for f in files:
+    for index, f in enumerate(files):
         content = await f.read()
         if len(content) > 20 * 1024 * 1024:
             raise ValidationException(f"文件 {f.filename} 超过 20MB 限制")
         uploaded.append(UploadedCsv(
             filename=f.filename or "unknown.csv",
             content=content,
-            client_last_modified=None,
+            client_last_modified=parse_client_last_modified(
+                client_last_modified[index] if index < len(client_last_modified) else None
+            ),
         ))
 
     return await preview_roast_csv_import(
@@ -89,7 +93,7 @@ async def backfill_commit(
     submitted: list[dict] = []
     for raw in raw_items:
         item = BulkImportCommitItem.model_validate(raw)
-        submitted.append(item.model_dump(mode="json"))
+        submitted.append(item.model_dump(mode="python"))
 
     file_bytes_by_hash: dict[str, bytes] = {}
     for f in files:
@@ -106,4 +110,5 @@ async def backfill_commit(
         job_id=job_id,
         submitted_items=submitted,
         file_bytes_by_hash=file_bytes_by_hash,
+        expected_mode="historical_backfill",
     )

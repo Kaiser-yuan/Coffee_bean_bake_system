@@ -11,6 +11,7 @@ from app.schemas.all_schemas import (
     InventoryAdjustmentRequest,
     GreenBeanWithFirstPurchaseRequest,
     NextRoastPlanRequest,
+    BulkImportCommitItem,
 )
 
 
@@ -149,3 +150,9 @@ class TestNextRoastPlan:
                 purchase_batch_id="pb-123",
                 planned_input_weight_grams=0,
             )
+
+
+def test_bulk_commit_item_python_dump_keeps_datetime():
+    roasted_at = datetime.now(timezone.utc)
+    item = BulkImportCommitItem(item_id="item-1", roasted_at=roasted_at)
+    assert item.model_dump(mode="python")["roasted_at"] == roasted_at

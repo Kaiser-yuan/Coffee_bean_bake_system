@@ -159,7 +159,7 @@
           <div class="form-row">
             <label class="form-label">生豆</label>
             <select v-model="createForm.greenBeanId" class="select" @change="onGreenBeanChange">
-              <option v-for="b in mockGreenBeans" :key="b.id" :value="b.id">{{ b.name }}</option>
+              <option v-for="b in roastContext.greenBeans" :key="b.id" :value="b.id">{{ b.name }}</option>
             </select>
           </div>
           <div class="form-row">
@@ -268,7 +268,6 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useRoastingStore } from '../stores/roasting'
-import { mockGreenBeans, mockPurchaseBatches, apiCreateRoastingBatch, apiCompleteBatch, apiUpdateWeightOut, mockRoastingBatches, getGreenBeanByBatch } from '../mock'
 import type { RoastingBatch, BatchDataCompleteness } from '../types'
 import {
   BEAN_PROCESSES, VARIETY_OPTIONS, REGION_OPTIONS, ROAST_LEVELS,
@@ -277,6 +276,19 @@ import {
 import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
 import EmptyState from '../components/common/EmptyState.vue'
+import {
+  createRoastingBatch,
+  completeRoastingBatch,
+  updateOutputWeight,
+  voidRoastingBatch,
+  reopenRoastingBatch,
+} from '../services/roastingBatchService'
+import {
+  fetchRoastContext,
+  invalidateRoastContext,
+  getGreenBeanByBatch,
+  type RoastContext,
+} from '../services/greenBeanContextService'
 
 const router = useRouter()
 const store = useRoastingStore()
@@ -284,6 +296,9 @@ const loading = ref(false)
 const error = ref(false)
 const createOpen = ref(false)
 const showMoreFilters = ref(false)
+
+// Green-bean / purchase-batch context (loaded via service, demo-aware)
+const roastContext = ref<RoastContext>({ greenBeans: [], purchaseBatches: [], roastingBatches: [] })
 
 const filters = ref({
   greenBeanName: '',
@@ -296,7 +311,7 @@ const filters = ref({
 })
 
 const createForm = ref({
-  greenBeanId: mockGreenBeans[0]?.id || '',
+  greenBeanId: '',
   purchaseBatchId: '',
   plannedDate: new Date().toISOString().split('T')[0],
   beanWeightIn: 500,
@@ -305,19 +320,19 @@ const createForm = ref({
 
 const availablePurchaseBatches = computed(() => {
   if (!createForm.value.greenBeanId) return []
-  return mockPurchaseBatches.filter(p => p.greenBeanId === createForm.value.greenBeanId)
+  return roastContext.value.purchaseBatches.filter(p => p.greenBeanId === createForm.value.greenBeanId)
 })
 
 function getBeanNameForBatch(batchId: string) {
   const b = store.batches.find(b => b.id === batchId)
   if (!b) return '-'
-  return getGreenBeanByBatch(b)?.name || '-'
+  return getGreenBeanByBatch(roastContext.value, b)?.name || '-'
 }
 
 function getBeanMeta(batchId: string) {
   const b = store.batches.find(b => b.id === batchId)
   if (!b) return ''
-  const gb = b ? getGreenBeanByBatch(b) : undefined
+  const gb = getGreenBeanByBatch(roastContext.value, b)
   return gb ? `${gb.variety} · ${gb.process} · ${gb.region}` : ''
 }
 
@@ -350,66 +365,58 @@ function openBatchActions(b: RoastingBatch) {
 
 async function doMarkComplete() {
   if (!actionBatch.value) return
-  await apiCompleteBatch(actionBatch.value.id, actionConfirmWeightIn.value, actionConfirmDate.value)
-  // Also set roast level if provided
-  const b = mockRoastingBatches.find(b => b.id === actionBatch.value?.id)
-  if (b && actionRoastLevel.value) b.roastLevel = actionRoastLevel.value as any
+  await completeRoastingBatch(
+    actionBatch.value.id,
+    actionConfirmWeightIn.value,
+    actionConfirmDate.value,
+  )
+  // Note: roast level is not yet part of the backend complete API; demo-only convenience.
   actionModalOpen.value = false
+  invalidateRoastContext()
   await fetchBatches()
 }
 
 async function doCancelComplete() {
   if (!actionBatch.value) return
-  const b = mockRoastingBatches.find(b => b.id === actionBatch.value?.id)
-  if (b) {
-    b.status = 'planned'
-    b.actualDate = undefined
-    b.beanWeightOut = undefined
-    b.weightLossRate = undefined
-    b.totalTime = undefined
-  }
+  await reopenRoastingBatch(actionBatch.value.id)
   actionModalOpen.value = false
   await fetchBatches()
 }
 
 async function doVoidBatch() {
   if (!actionBatch.value) return
-  const b = mockRoastingBatches.find(b => b.id === actionBatch.value?.id)
-  if (b) {
-    b.status = 'voided'
-  }
+  await voidRoastingBatch(actionBatch.value.id)
   actionModalOpen.value = false
   await fetchBatches()
 }
 
 async function doUpdateWeightOut() {
   if (!actionBatch.value || actionWeightOut.value <= 0) return
-  await apiUpdateWeightOut(actionBatch.value.id, actionWeightOut.value)
+  await updateOutputWeight(actionBatch.value.id, actionWeightOut.value)
   actionModalOpen.value = false
+  invalidateRoastContext()
   await fetchBatches()
 }
 
 const filteredBatches = computed(() => {
   let list = [...store.batches]
   const f = filters.value
+  const beanFor = (b: RoastingBatch) => getGreenBeanByBatch(roastContext.value, b)
   if (f.greenBeanName) {
     const q = f.greenBeanName.toLowerCase()
     list = list.filter(b => {
-      const gb = getGreenBeanByBatch(b)
+      const gb = beanFor(b)
       return gb?.name.toLowerCase().includes(q)
     })
   }
   if (f.variety) list = list.filter(b => {
-    const gb = getGreenBeanByBatch(b)
-    return gb?.variety === f.variety
+    return beanFor(b)?.variety === f.variety
   })
   if (f.process) list = list.filter(b => {
-    const gb = getGreenBeanByBatch(b)
-    return gb?.process === f.process
+    return beanFor(b)?.process === f.process
   })
   if (f.region) list = list.filter(b => {
-    const gb = getGreenBeanByBatch(b)
-    return gb?.region === f.region
+    return beanFor(b)?.region === f.region
   })
   if (f.status) list = list.filter(b => b.status === f.status)
   if (f.hasCurve === 'true') list = list.filter(b => b.curveStatus === 'parsed')
@@ -449,7 +456,7 @@ function openCreateDialog() {
 function onGreenBeanChange() {
   // Reset purchaseBatchId when green bean changes
   createForm.value.purchaseBatchId = ''
-  const batches = mockPurchaseBatches.filter(p => p.greenBeanId === createForm.value.greenBeanId)
+  const batches = roastContext.value.purchaseBatches.filter(p => p.greenBeanId === createForm.value.greenBeanId)
   if (batches.length > 0) {
     createForm.value.purchaseBatchId = batches[0].id
   }
@@ -465,7 +472,7 @@ async function onCreate() {
     alert('投豆量必须大于零')
     return
   }
-  const pb = mockPurchaseBatches.find(p => p.id === createForm.value.purchaseBatchId)
+  const pb = roastContext.value.purchaseBatches.find(p => p.id === createForm.value.purchaseBatchId)
   if (pb && createForm.value.beanWeightIn > pb.remainingStock) {
     alert(`投豆量 (${createForm.value.beanWeightIn}g) 超过采购批次可用库存 (${pb.remainingStock}g)`)
     return
@@ -475,13 +482,14 @@ async function onCreate() {
     return
   }
 
-  await apiCreateRoastingBatch({
+  await createRoastingBatch({
     purchaseBatchId: createForm.value.purchaseBatchId,
     plannedDate: createForm.value.plannedDate,
     beanWeightIn: createForm.value.beanWeightIn,
     targetDescription: createForm.value.targetDescription,
   })
   createOpen.value = false
+  invalidateRoastContext()
   await fetchBatches()
 }
 
@@ -489,7 +497,15 @@ async function fetchBatches() {
   loading.value = true
   error.value = false
   try {
-    await store.fetchBatches()
+    await Promise.all([
+      store.fetchBatches(),
+      fetchRoastContext().then((ctx) => {
+        roastContext.value = ctx
+        if (!createForm.value.greenBeanId && ctx.greenBeans.length) {
+          createForm.value.greenBeanId = ctx.greenBeans[0].id
+        }
+      }),
+    ])
   } catch {
     error.value = true
   } finally {

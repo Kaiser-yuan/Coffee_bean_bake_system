@@ -6,7 +6,6 @@ inventory. The original CSV bytes are re-sent at commit time, keyed by the
 file_hash returned from preview.
 """
 import json
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 
@@ -17,6 +16,7 @@ from ...schemas.all_schemas import (
 )
 from ...services.bulk_import import (
     preview_roast_csv_import, commit_roast_csv_import, UploadedCsv,
+    parse_client_last_modified,
 )
 
 router = APIRouter(tags=["bulk-imports"])
@@ -24,16 +24,6 @@ router = APIRouter(tags=["bulk-imports"])
 _ALLOWED_STRATEGIES = {
     "auto", "csv_content", "filename", "file_last_modified", "manual", "upload_order",
 }
-
-
-def _parse_client_last_modified(raw: str | None) -> datetime | None:
-    """Browser file.lastModified is an epoch-millis string."""
-    if not raw:
-        return None
-    try:
-        return datetime.fromtimestamp(float(raw) / 1000.0, tz=timezone.utc)
-    except (ValueError, TypeError):
-        return None
 
 
 @router.post(
@@ -50,20 +40,23 @@ async def bulk_preview(
     default_roast_date: str | None = Form(None),
     first_roast_time: str | None = Form(None),
     time_inference_strategy: str | None = Form(None),
+    client_last_modified: list[str] = Form(default=[]),
 ):
     """Preview a multi-CSV roast generation for a purchase batch."""
     if time_inference_strategy and time_inference_strategy not in _ALLOWED_STRATEGIES:
         raise ValidationException(f"不支持的时间推断策略: {time_inference_strategy}")
 
     uploaded: list[UploadedCsv] = []
-    for f in files:
+    for index, f in enumerate(files):
         content = await f.read()
         if len(content) > 20 * 1024 * 1024:
             raise ValidationException(f"文件 {f.filename} 超过 20MB 限制")
         uploaded.append(UploadedCsv(
             filename=f.filename or "unknown.csv",
             content=content,
-            client_last_modified=None,  # multipart form doesn't carry per-file lastModified
+            client_last_modified=parse_client_last_modified(
+                client_last_modified[index] if index < len(client_last_modified) else None
+            ),
         ))
 
     return await preview_roast_csv_import(
@@ -108,7 +101,7 @@ async def bulk_commit(
     submitted: list[dict] = []
     for raw in raw_items:
         item = BulkImportCommitItem.model_validate(raw)
-        submitted.append(item.model_dump(mode="json"))
+        submitted.append(item.model_dump(mode="python"))
 
     file_bytes_by_hash: dict[str, bytes] = {}
     for f in files:
@@ -125,4 +118,6 @@ async def bulk_commit(
         job_id=job_id,
         submitted_items=submitted,
         file_bytes_by_hash=file_bytes_by_hash,
+        expected_purchase_batch_id=purchase_batch_id,
+        expected_mode="csv_bulk_import",
     )

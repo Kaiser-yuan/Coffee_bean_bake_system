@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { RoastingBatch } from '../types'
-import { fetchRoastingBatches } from '../services/roastingBatchService'
-import * as mockApi from '../mock'
+import { fetchRoastingBatches, completeRoastingBatch } from '../services/roastingBatchService'
 
 export const useRoastingStore = defineStore('roasting', () => {
   const batches = ref<RoastingBatch[]>([])
@@ -41,8 +40,8 @@ export const useRoastingStore = defineStore('roasting', () => {
     }
   }
 
-  async function markComplete(batchId: string) {
-    await mockApi.apiCompleteBatch(batchId)
+  async function markComplete(batchId: string, actualInputWeightGrams: number, roastedAt?: string) {
+    await completeRoastingBatch(batchId, actualInputWeightGrams, roastedAt)
     await fetchBatches()
   }
 

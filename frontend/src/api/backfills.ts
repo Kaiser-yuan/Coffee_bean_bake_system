@@ -19,7 +19,10 @@ export function previewHistoricalRoastCsvBackfill(
 ): Promise<BulkImportPreviewResponseDto> {
   const form = new FormData()
   form.append('purchase_batch_id', params.purchase_batch_id)
-  for (const f of files) form.append('files', f, f.name)
+  for (const f of files) {
+    form.append('files', f, f.name)
+    form.append('client_last_modified', String(f.lastModified))
+  }
   if (params.default_input_weight_grams != null)
     form.append('default_input_weight_grams', String(params.default_input_weight_grams))
   form.append('inventory_effective_default', String(params.inventory_effective_default ?? false))

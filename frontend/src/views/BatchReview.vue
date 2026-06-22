@@ -9,7 +9,7 @@
     </div>
 
     <LoadingState v-if="loading" text="加载复盘数据…" />
-    <ErrorState v-else-if="error" :retry="true" @retry="fetchReview" />
+    <ErrorState v-else-if="error" :retry="true" @retry="fetchReviewData" />
 
     <template v-else>
       <div class="review-grid">
@@ -240,11 +240,23 @@
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  mockRoastingBatches, mockReviews, mockQuestionnaires, mockPurchaseBatches,
+  fetchReview as fetchReviewSvc,
+  saveReview as saveReviewSvc,
+  createNextRoastPlan,
+} from '../services/reviewService'
+import {
+  createQuestionnaire as createQ,
+  closeQuestionnaire as closeQ,
+} from '../services/questionnaireService'
+import {
+  fetchRoastContext,
   getGreenBeanByBatch,
-  apiSaveReview, apiCreateQuestionnaire, apiCloseQuestionnaire,
-  apiCreateRoastingBatch, apiUpdateWeightOut,
-} from '../mock'
+  invalidateRoastContext,
+  type RoastContext,
+} from '../services/greenBeanContextService'
+import {
+  updateOutputWeight,
+} from '../services/roastingBatchService'
 import type { BatchReview, RoastingBatch, Questionnaire } from '../types'
 import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
@@ -282,26 +294,35 @@ const getPurchaseLabel = ref('')
 
 const getBeanName = ref('')
 
+const roastContext = ref<RoastContext>({ greenBeans: [], purchaseBatches: [], roastingBatches: [] })
+
 function formatTime(s: number) {
   const m = Math.floor(s / 60)
   const sec = Math.floor(s % 60)
   return `${m}:${sec.toString().padStart(2, '0')}`
 }
 
-async function fetchReview() {
+async function fetchReviewData() {
   loading.value = true
   error.value = false
   try {
-    batch.value = mockRoastingBatches.find(b => b.id === batchId) || null
+    const [ctx, rev] = await Promise.all([
+      fetchRoastContext(),
+      fetchReviewSvc(batchId),
+    ])
+    roastContext.value = ctx
+    batch.value = ctx.roastingBatches.find(b => b.id === batchId) || null
 
     if (batch.value) {
-      getBeanName.value = getGreenBeanByBatch(batch.value)?.name || ''
-      const pb = mockPurchaseBatches.find(p => p.id === batch.value!.purchaseBatchId)
+      getBeanName.value = getGreenBeanByBatch(ctx, batch.value)?.name || ''
+      const pb = ctx.purchaseBatches.find(p => p.id === batch.value!.purchaseBatchId)
       getPurchaseLabel.value = pb ? `PB-${pb.id.replace('pb_', '')}` : '-'
     }
 
-    // 问卷不依赖曲线或复盘存在
-    const q = mockQuestionnaires.find(q => q.roastingBatchId === batchId)
+    // Questionnaire state
+    const { fetchQuestionnaires } = await import('../services/questionnaireService')
+    const qs = await fetchQuestionnaires()
+    const q = qs.find(q => q.roastingBatchId === batchId)
     if (q) {
       questionnaire.value = q
       evaluationCount.value = q.submissionCount
@@ -310,9 +331,8 @@ async function fetchReview() {
       }
     }
 
-    const existing = mockReviews.find(r => r.roastingBatchId === batchId)
-    if (existing) {
-      review.value = { ...existing }
+    if (rev) {
+      review.value = { ...rev }
     }
   } catch {
     error.value = true
@@ -322,7 +342,7 @@ async function fetchReview() {
 }
 
 async function savePersonal() {
-  await apiSaveReview({
+  await saveReviewSvc({
     roastingBatchId: batchId,
     personalReview: review.value.personalReview,
     personalReviewAt: new Date().toISOString().split('T')[0],
@@ -331,7 +351,7 @@ async function savePersonal() {
 }
 
 async function saveComprehensive() {
-  await apiSaveReview({
+  await saveReviewSvc({
     roastingBatchId: batchId,
     comprehensiveReview: review.value.comprehensiveReview,
     comprehensiveReviewAt: new Date().toISOString().split('T')[0],
@@ -340,14 +360,14 @@ async function saveComprehensive() {
 }
 
 async function saveNextSuggestions() {
-  await apiSaveReview({
+  await saveReviewSvc({
     roastingBatchId: batchId,
     nextBatchSuggestions: review.value.nextBatchSuggestions,
   })
 }
 
 async function saveReminders() {
-  await apiSaveReview({
+  await saveReviewSvc({
     roastingBatchId: batchId,
     reminders: review.value.reminders,
   })
@@ -355,11 +375,8 @@ async function saveReminders() {
 
 async function saveWeightOut() {
   if (!batch.value || weightOutValue.value <= 0) return
-  await apiUpdateWeightOut(batch.value.id, weightOutValue.value)
-  batch.value.beanWeightOut = weightOutValue.value
-  // Re-fetch to get computed weightLossRate
-  const updated = mockRoastingBatches.find(b => b.id === batchId)
-  if (updated) batch.value = updated
+  batch.value = await updateOutputWeight(batch.value.id, weightOutValue.value)
+  invalidateRoastContext()
   showWeightOutInput.value = false
 }
 
@@ -375,14 +392,14 @@ function addReminder() {
 
 async function createQuestionnaire() {
   if (!batch.value) return
-  await apiCreateQuestionnaire(batch.value.id)
-  await fetchReview()
+  await createQ(batch.value.id)
+  await fetchReviewData()
 }
 
 async function closeQuestionnaire() {
   if (!questionnaire.value) return
-  await apiCloseQuestionnaire(questionnaire.value.id)
-  await fetchReview()
+  await closeQ(questionnaire.value.id)
+  await fetchReviewData()
 }
 
 function openNextBatchDialog() {
@@ -398,13 +415,14 @@ function openNextBatchDialog() {
 
 async function doCreateNextBatch() {
   if (!batch.value) return
-  const newBatch = await apiCreateRoastingBatch({
+  await createNextRoastPlan(batch.value.id, {
     purchaseBatchId: batch.value.purchaseBatchId,
     plannedDate: nextBatchForm.value.plannedDate,
     beanWeightIn: nextBatchForm.value.beanWeightIn,
     targetDescription: nextBatchForm.value.targetDescription,
-    status: 'planned',
+    reminderIds: nextBatchForm.value.selectedReminders,
   })
+  invalidateRoastContext()
 
   // Calculate bean age days for reference
   if (batch.value.actualDate) {
@@ -414,21 +432,12 @@ async function doCreateNextBatch() {
     // bean age is auto-calculated, stored in evaluation
   }
 
-  // Copy selected reminders as snapshots
-  const selectedRems = review.value.reminders.filter(r => nextBatchForm.value.selectedReminders.includes(r.id))
-  selectedRems.forEach(r => {
-    r.carriedToBatchId = newBatch.id
-    r.sourceReviewId = review.value.id
-    r.sourceRoastingBatchId = batch.value!.id
-    r.targetRoastingBatchId = newBatch.id
-  })
-
   nextBatchDialog.value = false
   router.push('/roasting')
 }
 
 
-onMounted(fetchReview)
+onMounted(fetchReviewData)
 </script>
 
 <style scoped>

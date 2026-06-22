@@ -26,7 +26,7 @@ export function toRoastingBatch(dto: RoastingBatchResponseDto): RoastingBatch {
     purchaseBatchId: dto.purchase_batch_id,
     plannedDate: dto.planned_at || undefined,
     actualDate: dto.roasted_at || undefined,
-    beanWeightIn: dto.planned_input_weight_grams,
+    beanWeightIn: dto.actual_input_weight_grams ?? dto.planned_input_weight_grams,
     beanWeightOut: dto.output_weight_grams ?? undefined,
     weightLossRate: dto.weight_loss_percent ?? undefined,
     totalTime: dto.total_time_seconds ?? undefined,
@@ -34,9 +34,9 @@ export function toRoastingBatch(dto: RoastingBatchResponseDto): RoastingBatch {
     developmentRatio: dto.development_ratio_percent ?? undefined,
     targetDescription: dto.target_description || undefined,
     status: dto.status as BatchStatus,
-    curveStatus: 'none' as CurveStatus,
-    evaluationStatus: 'none' as EvaluationStatus,
-    reviewStatus: 'none' as ReviewStatus,
+    curveStatus: (dto.completeness && !dto.completeness.missing_curve ? 'parsed' : 'none') as CurveStatus,
+    evaluationStatus: (dto.completeness && !dto.completeness.missing_evaluation ? 'closed' : 'none') as EvaluationStatus,
+    reviewStatus: (dto.completeness && !dto.completeness.missing_review ? 'done' : 'none') as ReviewStatus,
     colorTag: dto.color_tag || undefined,
   }
 }

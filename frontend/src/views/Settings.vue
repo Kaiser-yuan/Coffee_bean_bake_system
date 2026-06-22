@@ -127,9 +127,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { ApiError, isDemoMode } from '../api/http'
-import * as termsApi from '../api/terms'
-import { toStandardTerm } from '../adapters/term'
-import { apiGetTerms, apiUpdateTerm } from '../mock'
+import { fetchTerms, updateTerm as updateTermSvc } from '../services/termService'
 import type { StandardTerm } from '../types'
 import EmptyState from '../components/common/EmptyState.vue'
 
@@ -165,12 +163,7 @@ async function loadTerms() {
   loading.value = true
   errorMessage.value = ''
   try {
-    if (isDemoMode) {
-      terms.value = await apiGetTerms()
-    } else {
-      const dtos = await termsApi.listAdminTerms()
-      terms.value = dtos.map(toStandardTerm)
-    }
+    terms.value = await fetchTerms()
   } catch (error) {
     errorMessage.value = error instanceof ApiError
       ? error.message
@@ -185,13 +178,8 @@ async function toggleTerm(term: StandardTerm) {
   savingTermId.value = term.id
   errorMessage.value = ''
   try {
-    if (isDemoMode) {
-      const updated = await apiUpdateTerm(term.id, { active: nextActive })
-      Object.assign(term, updated)
-    } else {
-      const dto = await termsApi.updateTerm(term.id, { is_active: nextActive })
-      Object.assign(term, toStandardTerm(dto))
-    }
+    const updated = await updateTermSvc(term.id, { active: nextActive })
+    Object.assign(term, updated)
   } catch (error) {
     errorMessage.value = error instanceof ApiError
       ? error.message

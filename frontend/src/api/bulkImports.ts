@@ -100,9 +100,12 @@ export interface PreviewParams {
   time_inference_strategy?: TimeInferenceStrategy
 }
 
-function buildPreviewForm(files: File[], params: PreviewParams): FormData {
+export function buildPreviewForm(files: File[], params: PreviewParams): FormData {
   const form = new FormData()
-  for (const f of files) form.append('files', f, f.name)
+  for (const f of files) {
+    form.append('files', f, f.name)
+    form.append('client_last_modified', String(f.lastModified))
+  }
   if (params.default_input_weight_grams != null)
     form.append('default_input_weight_grams', String(params.default_input_weight_grams))
   form.append('inventory_effective_default', String(params.inventory_effective_default ?? true))

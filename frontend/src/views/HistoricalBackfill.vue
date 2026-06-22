@@ -156,6 +156,7 @@ import type {
   BulkImportCommitResponseDto,
   TimeInferenceStrategy,
 } from '../api/bulkImports'
+import { invalidateRoastContext } from '../services/greenBeanContextService'
 
 const loading = ref(false)
 const errorText = ref('')
@@ -289,6 +290,7 @@ async function doCommit() {
       files.value,
     )
     commitResult.value = res
+    invalidateRoastContext()
   } catch (e) {
     errorText.value = e instanceof ApiError ? e.message : '提交失败'
   } finally {

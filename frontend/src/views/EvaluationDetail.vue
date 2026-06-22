@@ -125,9 +125,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  mockQuestionnaires, mockEvaluations,
-  apiCloseQuestionnaire,
-} from '../mock'
+  fetchQuestionnaire,
+  closeQuestionnaire,
+} from '../services/questionnaireService'
+import { fetchEvaluations } from '../services/evaluationService'
 import type { Questionnaire, CuppingEvaluation } from '../types'
 import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
@@ -213,7 +214,7 @@ function copyUrl() {
 
 async function closeQ() {
   if (questionnaire.value) {
-    await apiCloseQuestionnaire(questionnaire.value.id)
+    await closeQuestionnaire(questionnaire.value.id)
     await fetchData()
   }
 }
@@ -222,8 +223,12 @@ async function fetchData() {
   loading.value = true
   error.value = false
   try {
-    questionnaire.value = mockQuestionnaires.find(q => q.id === questionnaireId) || null
-    evaluations.value = mockEvaluations.filter(e => e.questionnaireId === questionnaireId)
+    const [q, evals] = await Promise.all([
+      fetchQuestionnaire(questionnaireId),
+      fetchEvaluations(questionnaireId),
+    ])
+    questionnaire.value = q
+    evaluations.value = evals
   } catch {
     error.value = true
   } finally {

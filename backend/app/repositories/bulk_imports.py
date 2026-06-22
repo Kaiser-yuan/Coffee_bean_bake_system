@@ -11,12 +11,17 @@ from .base import BaseRepository
 class BulkImportJobRepository(BaseRepository[BulkImportJob]):
     model = BulkImportJob
 
-    async def get_with_items(self, job_id: str) -> BulkImportJob | None:
-        result = await self.db.execute(
+    async def get_with_items(
+        self, job_id: str, *, for_update: bool = False,
+    ) -> BulkImportJob | None:
+        stmt = (
             select(BulkImportJob)
             .options(selectinload(BulkImportJob.items))
             .where(BulkImportJob.id == job_id)
         )
+        if for_update:
+            stmt = stmt.with_for_update()
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
 

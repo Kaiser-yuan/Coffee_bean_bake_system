@@ -150,7 +150,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { mockCurves, mockRoastingBatches, mockQuestionnaires, getGreenBeanByBatch, apiCreateQuestionnaire } from '../mock'
+import { fetchCurves as fetchCurvesSvc, fetchCurve } from '../services/curveService'
+import { createQuestionnaire as createQuestionnaireSvc } from '../services/questionnaireService'
+import { fetchRoastContext, getGreenBeanByBatch, type RoastContext } from '../services/greenBeanContextService'
 import type { RoastingCurve } from '../types'
 import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
@@ -166,6 +168,7 @@ const batchVisible = ref<boolean[]>([])
 const compareMode = ref<'batch' | 'channel'>('batch')
 const questionnaireCreated = ref(false)
 const questionnaireStatusText = ref('')
+const roastContext = ref<RoastContext>({ greenBeans: [], purchaseBatches: [], roastingBatches: [] })
 
 // 指标通道定义 — 单锅：指标颜色+线型；多锅：批次颜色+指标线型
 const channels = ref([
@@ -191,7 +194,7 @@ const batchIds = computed(() => {
 
 const currentBatch = computed(() => {
   if (isCompare.value) return null
-  return mockRoastingBatches.find(b => b.id === batchIds.value[0])
+  return roastContext.value.roastingBatches.find(b => b.id === batchIds.value[0])
 })
 
 const currentCurve = computed(() => curves.value[0])
@@ -204,15 +207,15 @@ const beanAgeDays = computed(() => {
 })
 
 function getBeanName(batchId: string) {
-  const batch = mockRoastingBatches.find(b => b.id === batchId)
+  const batch = roastContext.value.roastingBatches.find(b => b.id === batchId)
   if (!batch) return '-'
-  return getGreenBeanByBatch(batch)?.name || '-'
+  return getGreenBeanByBatch(roastContext.value, batch)?.name || '-'
 }
 
 function getBatchShortLabel(batchId: string) {
-  const b = mockRoastingBatches.find(b => b.id === batchId)
+  const b = roastContext.value.roastingBatches.find(b => b.id === batchId)
   if (!b) return batchId
-  const gb = getGreenBeanByBatch(b)
+  const gb = getGreenBeanByBatch(roastContext.value, b)
   return `${gb?.name || ''} (${b.actualDate || b.plannedDate})`
 }
 
@@ -230,10 +233,9 @@ function goToReview() {
 
 async function createQuestionnaire() {
   if (!currentBatch.value) return
-  await apiCreateQuestionnaire(currentBatch.value.id)
+  await createQuestionnaireSvc(currentBatch.value.id)
   questionnaireCreated.value = true
-  // Refresh batch
-  const updated = mockRoastingBatches.find(b => b.id === currentBatch.value?.id)
+  const updated = roastContext.value.roastingBatches.find(b => b.id === currentBatch.value?.id)
   if (updated) updated.evaluationStatus = 'open'
 }
 
@@ -252,7 +254,10 @@ async function fetchCurves() {
   loading.value = true
   error.value = false
   try {
-    curves.value = mockCurves.filter(c => batchIds.value.includes(c.roastingBatchId))
+    const allCurves = batchIds.value.length > 1
+      ? await fetchCurvesSvc(batchIds.value)
+      : [await fetchCurve(batchIds.value[0])].filter(Boolean) as RoastingCurve[]
+    curves.value = allCurves.filter(c => batchIds.value.includes(c.roastingBatchId))
     curves.value = batchIds.value
       .map(id => curves.value.find(c => c.roastingBatchId === id))
       .filter(Boolean) as RoastingCurve[]
@@ -260,7 +265,9 @@ async function fetchCurves() {
 
     // Check if questionnaire already exists
     if (!isCompare.value && currentBatch.value) {
-      const existingQ = mockQuestionnaires.find(q => q.roastingBatchId === currentBatch.value!.id)
+      const qs = await import('../services/questionnaireService')
+      const allQ = await qs.fetchQuestionnaires()
+      const existingQ = allQ.find(q => q.roastingBatchId === currentBatch.value!.id)
       questionnaireCreated.value = !!existingQ
       if (existingQ) {
         questionnaireStatusText.value = existingQ.status === 'open' ? '评价进行中' : '评价已关闭'
@@ -445,7 +452,10 @@ function renderChart() {
 }
 
 watch(() => route.params, fetchCurves)
-onMounted(fetchCurves)
+onMounted(async () => {
+  await fetchRoastContext().then(ctx => { roastContext.value = ctx })
+  await fetchCurves()
+})
 </script>
 
 <style scoped>

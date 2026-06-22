@@ -163,13 +163,11 @@
 import { ref, computed, onMounted, reactive } from 'vue'
 import { useRoute } from 'vue-router'
 import {
-  mockRoastingBatches,
-  getGreenBeanByBatch,
-  apiGetQuestionnaireByCode,
-  apiSubmitEvaluation,
-} from '../mock'
+  fetchQuestionnaireByCode,
+  type PublicQuestionnaireView,
+} from '../services/questionnaireService'
+import { submitEvaluation } from '../services/evaluationService'
 import { FLAVOR_TAGS, BREW_METHODS, DRINK_TEMPERATURES, DRINK_FORMS } from '../types'
-import type { Questionnaire } from '../types'
 import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
 
@@ -179,7 +177,7 @@ const shareCode = route.params.shareCode as string
 const loading = ref(false)
 const error = ref(false)
 const submitted = ref(false)
-const questionnaire = ref<Questionnaire | null>(null)
+const questionnaire = ref<PublicQuestionnaireView | null>(null)
 
 const dimensions = [
   { key: 'dryFragrance', label: '干香', description: '干咖啡粉的香气', isIntensity: false },
@@ -214,23 +212,18 @@ const isValid = computed(() => {
 })
 
 const getBeanName = computed(() => {
-  if (!questionnaire.value) return ''
-  const b = mockRoastingBatches.find(b => b.id === questionnaire.value!.roastingBatchId)
-  if (!b) return ''
-  return getGreenBeanByBatch(b)?.name || ''
+  return questionnaire.value?.greenBeanName || ''
 })
 
 const getBatchDate = computed(() => {
-  if (!questionnaire.value) return ''
-  const b = mockRoastingBatches.find(b => b.id === questionnaire.value!.roastingBatchId)
-  return b?.actualDate || b?.plannedDate || ''
+  return questionnaire.value?.roastDate || ''
 })
 
 async function fetchQ() {
   loading.value = true
   error.value = false
   try {
-    const q = await apiGetQuestionnaireByCode(shareCode)
+    const q = await fetchQuestionnaireByCode(shareCode)
     if (q && q.status === 'open') {
       questionnaire.value = q
     } else {
@@ -246,18 +239,9 @@ async function fetchQ() {
 async function onSubmit() {
   if (!isValid.value || !questionnaire.value) return
   try {
-    // Calculate bean age days from roast date
-    let beanAgeDays: number | undefined
-    const batch = mockRoastingBatches.find(b => b.id === questionnaire.value!.roastingBatchId)
-    if (batch?.actualDate) {
-      const bakeDate = new Date(batch.actualDate)
-      const today = new Date()
-      beanAgeDays = Math.floor((today.getTime() - bakeDate.getTime()) / (1000 * 60 * 60 * 24))
-    }
-
-    await apiSubmitEvaluation({
-      questionnaireId: questionnaire.value.id,
-      roastingBatchId: questionnaire.value.roastingBatchId,
+    await submitEvaluation(shareCode, {
+      questionnaireId: '',
+      roastingBatchId: '',
       dryFragrance: form.dryFragrance,
       wetAroma: form.wetAroma,
       acidity: form.acidity,
@@ -272,7 +256,6 @@ async function onSubmit() {
       freeNotes: form.freeNotes,
       evaluatorName: form.evaluatorName,
       evaluatorType: form.evaluatorType,
-      beanAgeDays,
       submittedAt: new Date().toISOString().split('T')[0],
     })
     submitted.value = true

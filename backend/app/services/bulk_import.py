@@ -30,6 +30,7 @@ from ..parsers.kaleido_m1 import parse_kaleido_m1, compute_auc
 from ..repositories.bulk_imports import (
     BulkImportJobRepository, find_duplicate_hashes,
 )
+from ..repositories.purchase_batches import PurchaseBatchRepository
 from ..services.inventory import (
     calculate_remaining_stock, append_inventory_ledger, lock_purchase_batch,
 )
@@ -47,6 +48,25 @@ _FILENAME_DATE_RE = re.compile(r"(\d{2})(\d{2})(\d{2})")
 # ============================================================
 # Time inference
 # ============================================================
+def parse_client_last_modified(raw: str | None) -> datetime | None:
+    """Parse browser File.lastModified, which is epoch milliseconds."""
+    if not raw:
+        return None
+    try:
+        return datetime.fromtimestamp(float(raw) / 1000.0, tz=timezone.utc)
+    except (ValueError, TypeError, OSError):
+        return None
+
+
+def is_duplicate_file_hash(
+    file_hash: str, existing_hashes: set[str], seen_hashes: set[str],
+) -> bool:
+    """Mark duplicates found in the database or earlier in the same upload."""
+    duplicate = file_hash in existing_hashes or file_hash in seen_hashes
+    seen_hashes.add(file_hash)
+    return duplicate
+
+
 def _parse_date_str(s: str | None) -> date | None:
     if not s:
         return None
@@ -229,6 +249,10 @@ async def preview_roast_csv_import(
     if mode not in ("csv_bulk_import", "historical_backfill"):
         raise ValidationException(f"未知的导入模式: {mode}")
 
+    purchase_batch = await PurchaseBatchRepository(db).get_by_id(purchase_batch_id)
+    if not purchase_batch:
+        raise NotFoundException("PurchaseBatch", purchase_batch_id)
+
     # Persist job first so items can reference it
     job = BulkImportJob(
         purchase_batch_id=purchase_batch_id,
@@ -257,6 +281,7 @@ async def preview_roast_csv_import(
     duplicate_hashes = await find_duplicate_hashes(db, purchase_batch_id, hashes)
 
     items_payload: list[dict] = []
+    seen_hashes: set[str] = set()
     for order, (uf, parsed) in enumerate(parsed_files, start=1):
         if parsed is None:
             try:
@@ -308,7 +333,7 @@ async def preview_roast_csv_import(
         )
         summary = _build_preview_summary(parsed)
         warnings = [str(w) if not isinstance(w, str) else w for w in parsed.warnings]
-        is_dup = parsed.file_hash in duplicate_hashes
+        is_dup = is_duplicate_file_hash(parsed.file_hash, duplicate_hashes, seen_hashes)
 
         item = BulkImportItem(
             job_id=job.id,
@@ -377,6 +402,8 @@ async def commit_roast_csv_import(
     job_id: str,
     submitted_items: list[dict],
     file_bytes_by_hash: dict[str, bytes],
+    expected_purchase_batch_id: str | None = None,
+    expected_mode: str | None = None,
 ) -> dict:
     """Commit a previewed job: create completed roasting batches + curves.
 
@@ -390,9 +417,19 @@ async def commit_roast_csv_import(
     once (防重复提交).
     """
     job_repo = BulkImportJobRepository(db)
-    job = await job_repo.get_with_items(job_id)
+    job = await job_repo.get_with_items(job_id, for_update=True)
     if not job:
         raise NotFoundException("BulkImportJob", job_id)
+    if expected_purchase_batch_id and job.purchase_batch_id != expected_purchase_batch_id:
+        raise ConflictException(
+            code="BULK_IMPORT_PURCHASE_BATCH_MISMATCH",
+            message="导入任务与当前采购批次不匹配",
+        )
+    if expected_mode and job.mode != expected_mode:
+        raise ConflictException(
+            code="BULK_IMPORT_MODE_MISMATCH",
+            message="导入任务类型与当前入口不匹配",
+        )
     if job.status == "committed":
         raise ConflictException(
             code="BULK_IMPORT_ALREADY_COMMITTED",
@@ -408,12 +445,21 @@ async def commit_roast_csv_import(
 
     # Resolve a plan for every submitted, parsed item
     plan: list[dict] = []
+    submitted_item_ids: set[str] = set()
     for sub in submitted_items:
+        if sub["item_id"] in submitted_item_ids:
+            raise ValidationException(f"条目 {sub['item_id']} 被重复提交")
+        submitted_item_ids.add(sub["item_id"])
         item = items_by_id.get(sub["item_id"])
         if item is None:
             raise NotFoundException("BulkImportItem", sub["item_id"])
         if item.parse_status != "parsed":
             continue
+        if item.roasting_batch_id or item.curve_file_id:
+            raise ConflictException(
+                code="BULK_IMPORT_ITEM_ALREADY_COMMITTED",
+                message=f"文件 {item.original_filename} 已生成烘焙批次",
+            )
         actual_input = sub.get("actual_input_weight_grams") or job.default_input_weight_grams
         if not actual_input or actual_input <= 0:
             raise ValidationException(
@@ -431,12 +477,19 @@ async def commit_roast_csv_import(
             raise ValidationException(
                 f"文件 {item.original_filename} 的原始内容缺失，无法提交"
             )
+        output_weight = sub.get("output_weight_grams")
+        if output_weight is not None and (
+            output_weight <= 0 or output_weight > actual_input
+        ):
+            raise ValidationException(
+                f"文件 {item.original_filename} 的出豆量必须大于零且不超过投豆量"
+            )
         plan.append({
             "item": item,
             "actual_input": actual_input,
             "inventory_effective": inv_eff,
             "roasted_at": roasted_at,
-            "output_weight": sub.get("output_weight_grams"),
+            "output_weight": output_weight,
             "source_note": sub.get("source_note"),
             "content": file_bytes_by_hash[item.file_hash],
         })
@@ -446,6 +499,23 @@ async def commit_roast_csv_import(
 
     # Global inventory check + lock
     total_effective_input = sum(p["actual_input"] for p in plan if p["inventory_effective"])
+    if job.purchase_batch_id:
+        _pb = await lock_purchase_batch(db, job.purchase_batch_id)
+        if not _pb:
+            raise NotFoundException("PurchaseBatch", job.purchase_batch_id)
+
+        duplicate_hashes = await find_duplicate_hashes(
+            db,
+            job.purchase_batch_id,
+            [p["item"].file_hash for p in plan],
+        )
+        if duplicate_hashes:
+            raise ConflictException(
+                code="DUPLICATE_CURVE_FILE",
+                message="提交文件中存在已导入的重复 CSV",
+                details={"file_hashes": sorted(duplicate_hashes)},
+            )
+
     if job.purchase_batch_id and total_effective_input > 0:
         available = await calculate_remaining_stock(db, job.purchase_batch_id)
         if total_effective_input > available:
@@ -453,9 +523,6 @@ async def commit_roast_csv_import(
                 available_grams=available,
                 required_grams=total_effective_input,
             )
-        _pb = await lock_purchase_batch(db, job.purchase_batch_id)
-        if not _pb:
-            raise NotFoundException("PurchaseBatch", job.purchase_batch_id)
 
     entry_mode = "csv_bulk_import" if job.mode == "csv_bulk_import" else "historical_backfill"
 
@@ -467,72 +534,76 @@ async def commit_roast_csv_import(
     for p in plan:
         item: BulkImportItem = p["item"]
         content: bytes = p["content"]
+        storage_path: str | None = None
         try:
-            # 1. Create the completed roasting batch
-            batch = RoastingBatch(
-                purchase_batch_id=job.purchase_batch_id,
-                status="completed",
-                planned_at=p["roasted_at"],
-                roasted_at=p["roasted_at"],
-                planned_input_weight_grams=p["actual_input"],
-                actual_input_weight_grams=p["actual_input"],
-                output_weight_grams=p["output_weight"],
-                entry_mode=entry_mode,
-                inventory_effective=p["inventory_effective"],
-                roasted_at_source=item.roasted_at_source,
-                bulk_import_group_id=job.id,
-                source_note=p["source_note"],
-                color_tag=random.choice(BATCH_COLORS),
-            )
-            if p["output_weight"]:
-                batch.weight_loss_percent = round(
-                    (1 - p["output_weight"] / p["actual_input"]) * 100, 1
-                )
-            db.add(batch)
-            await db.flush()
-
-            # 2. Create curve file record + save bytes to disk
-            cf = CurveFile(
-                roasting_batch_id=batch.id,
-                original_filename=item.original_filename,
-                storage_path="",
-                file_size_bytes=len(content),
-                file_hash=item.file_hash,
-                source_type="kaleido_m1",
-                format_type="kaleido_kldo_v101",
-                parse_status="parsing",
-                parser_version="kl_v1.0",
-                uploaded_at=datetime.now(timezone.utc),
-            )
-            db.add(cf)
-            await db.flush()
-            cf.storage_path = _save_curve_file(content, batch.id, cf.id)
-
-            # 3. Parse + activate curve (sets batch summary fields too)
-            await parse_and_activate_curve(db, cf, content)
-            cf.parse_status = "parsed"
-            cf.parsed_at = datetime.now(timezone.utc)
-            await db.flush()
-
-            # 4. Optional inventory deduction
-            if p["inventory_effective"]:
-                await append_inventory_ledger(
-                    db=db,
+            async with db.begin_nested():
+                # 1. Create the completed roasting batch
+                batch = RoastingBatch(
                     purchase_batch_id=job.purchase_batch_id,
-                    change_grams=-p["actual_input"],
-                    event_type="roast_consumption",
-                    related_entity_type="roasting_batch",
-                    related_entity_id=batch.id,
+                    status="completed",
+                    planned_at=p["roasted_at"],
+                    roasted_at=p["roasted_at"],
+                    planned_input_weight_grams=p["actual_input"],
+                    actual_input_weight_grams=p["actual_input"],
+                    output_weight_grams=p["output_weight"],
+                    entry_mode=entry_mode,
+                    inventory_effective=p["inventory_effective"],
+                    roasted_at_source=item.roasted_at_source,
+                    bulk_import_group_id=job.id,
+                    source_note=p["source_note"],
+                    color_tag=random.choice(BATCH_COLORS),
                 )
-                total_consumed += p["actual_input"]
+                if p["output_weight"]:
+                    batch.weight_loss_percent = round(
+                        (1 - p["output_weight"] / p["actual_input"]) * 100, 1
+                    )
+                db.add(batch)
                 await db.flush()
 
-            # 5. Link item back to created entities
-            item.roasting_batch_id = batch.id
-            item.curve_file_id = cf.id
-            await db.flush()
+                # 2. Create curve file record + save bytes to disk
+                cf = CurveFile(
+                    roasting_batch_id=batch.id,
+                    original_filename=item.original_filename,
+                    storage_path="",
+                    file_size_bytes=len(content),
+                    file_hash=item.file_hash,
+                    source_type="kaleido_m1",
+                    format_type="kaleido_kldo_v101",
+                    parse_status="parsing",
+                    parser_version="kl_v1.0",
+                    uploaded_at=datetime.now(timezone.utc),
+                )
+                db.add(cf)
+                await db.flush()
+                storage_path = _save_curve_file(content, batch.id, cf.id)
+                cf.storage_path = storage_path
+
+                # 3. Parse + activate curve (sets batch summary fields too)
+                await parse_and_activate_curve(db, cf, content)
+                cf.parse_status = "parsed"
+                cf.parsed_at = datetime.now(timezone.utc)
+                await db.flush()
+
+                # 4. Optional inventory deduction
+                if p["inventory_effective"]:
+                    await append_inventory_ledger(
+                        db=db,
+                        purchase_batch_id=job.purchase_batch_id,
+                        change_grams=-p["actual_input"],
+                        event_type="roast_consumption",
+                        related_entity_type="roasting_batch",
+                        related_entity_id=batch.id,
+                    )
+                    await db.flush()
+
+                # 5. Link item back to created entities
+                item.roasting_batch_id = batch.id
+                item.curve_file_id = cf.id
+                await db.flush()
 
             success_count += 1
+            if p["inventory_effective"]:
+                total_consumed += p["actual_input"]
             result_items.append({
                 "item_id": item.id,
                 "filename": item.original_filename,
@@ -542,6 +613,8 @@ async def commit_roast_csv_import(
             })
         except Exception as e:  # pragma: no cover - defensive
             logger.exception("Bulk import item failed: %s", item.original_filename)
+            if storage_path:
+                (settings.upload_path / storage_path).unlink(missing_ok=True)
             failed_count += 1
             result_items.append({
                 "item_id": item.id,
@@ -551,7 +624,7 @@ async def commit_roast_csv_import(
                 "error_message": str(e),
             })
 
-    job.status = "committed" if failed_count == 0 else "failed"
+    job.status = "committed" if success_count > 0 else "failed"
     job.success_count = success_count
     job.failed_count = failed_count
     job.committed_at = datetime.now(timezone.utc)
@@ -565,4 +638,3 @@ async def commit_roast_csv_import(
         "total_consumed_grams": total_consumed,
         "items": result_items,
     }
-

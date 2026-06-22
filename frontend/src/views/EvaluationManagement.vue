@@ -85,10 +85,14 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import {
-  mockQuestionnaires, mockRoastingBatches,
+  fetchQuestionnaires,
+  closeQuestionnaire,
+} from '../services/questionnaireService'
+import {
+  fetchRoastContext,
   getGreenBeanByBatch,
-  apiCloseQuestionnaire,
-} from '../mock'
+  type RoastContext,
+} from '../services/greenBeanContextService'
 import type { Questionnaire } from '../types'
 import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
@@ -98,15 +102,16 @@ const router = useRouter()
 const loading = ref(false)
 const error = ref(false)
 const questionnaires = ref<Questionnaire[]>([])
+const roastContext = ref<RoastContext>({ greenBeans: [], purchaseBatches: [], roastingBatches: [] })
 
 const openCount = computed(() => questionnaires.value.filter(q => q.status === 'open').length)
 const closedCount = computed(() => questionnaires.value.filter(q => q.status === 'closed').length)
 const totalSubmissions = computed(() => questionnaires.value.reduce((s, q) => s + q.submissionCount, 0))
 
 function getBeanNameForQ(batchId: string) {
-  const b = mockRoastingBatches.find(b => b.id === batchId)
+  const b = roastContext.value.roastingBatches.find(b => b.id === batchId)
   if (!b) return '-'
-  return getGreenBeanByBatch(b)?.name || '-'
+  return getGreenBeanByBatch(roastContext.value, b)?.name || '-'
 }
 
 function getBatchIdLabel(batchId: string) {
@@ -114,14 +119,14 @@ function getBatchIdLabel(batchId: string) {
 }
 
 function getBatchDate(batchId: string) {
-  const b = mockRoastingBatches.find(b => b.id === batchId)
+  const b = roastContext.value.roastingBatches.find(b => b.id === batchId)
   return b?.actualDate || b?.plannedDate || '-'
 }
 
 function goToDetail(qId: string) { router.push(`/evaluations/${qId}`) }
 
 async function closeQ(id: string) {
-  await apiCloseQuestionnaire(id)
+  await closeQuestionnaire(id)
   await fetchData()
 }
 
@@ -129,7 +134,7 @@ function copyLink(q: Questionnaire) {
   const base = window.location.origin + (window.location.pathname || '')
   const url = `${base}#/eval/${q.shareCode}`
   navigator.clipboard.writeText(url).then(() => {
-    alert('已在当前演示会话中保存（演示环境：刷新后数据不保存）')
+    alert('已复制评价链接')
   })
 }
 
@@ -137,7 +142,12 @@ async function fetchData() {
   loading.value = true
   error.value = false
   try {
-    questionnaires.value = [...mockQuestionnaires]
+    const [qs, ctx] = await Promise.all([
+      fetchQuestionnaires(),
+      fetchRoastContext(),
+    ])
+    questionnaires.value = qs
+    roastContext.value = ctx
   } catch {
     error.value = true
   } finally {

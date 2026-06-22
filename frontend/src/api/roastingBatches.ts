@@ -6,8 +6,8 @@ import type {
   BatchCompleteRequestDto,
 } from './types'
 
-export function createRoastingBatch(body: RoastingBatchCreateRequestDto) {
-  return apiRequest('/roasting-batches', {
+export function createRoastingBatch(body: RoastingBatchCreateRequestDto): Promise<RoastingBatchResponseDto> {
+  return apiRequest<RoastingBatchResponseDto>('/roasting-batches', {
     method: 'POST',
     body,
     auth: true,
@@ -47,5 +47,33 @@ export function completeRoastingBatch(
   return apiRequest<RoastingBatchResponseDto>(
     `/roasting-batches/${batchId}/complete`,
     { method: 'POST', body, auth: true },
+  )
+}
+
+export function reopenRoastingBatch(
+  batchId: string,
+): Promise<RoastingBatchResponseDto> {
+  return apiRequest<RoastingBatchResponseDto>(
+    `/roasting-batches/${batchId}/reopen`,
+    { method: 'POST', auth: true },
+  )
+}
+
+export function voidRoastingBatch(
+  batchId: string,
+): Promise<RoastingBatchResponseDto> {
+  return apiRequest<RoastingBatchResponseDto>(
+    `/roasting-batches/${batchId}/void`,
+    { method: 'POST', auth: true },
+  )
+}
+
+export function updateOutputWeight(
+  batchId: string,
+  outputWeightGrams: number,
+): Promise<RoastingBatchResponseDto> {
+  return apiRequest<RoastingBatchResponseDto>(
+    `/roasting-batches/${batchId}/output-weight`,
+    { method: 'PATCH', body: { output_weight_grams: outputWeightGrams }, auth: true },
   )
 }

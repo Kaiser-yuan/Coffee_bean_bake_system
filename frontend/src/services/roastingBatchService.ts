@@ -25,7 +25,8 @@ export async function fetchRoastingBatches(): Promise<{
   total: number
 }> {
   if (isDemoMode) {
-    const res = await getMock().apiGetRoastingBatches()
+    const m = await getMock()
+    const res = await m.apiGetRoastingBatches()
     // items are already RoastingBatch (mock returns domain type directly)
     return { items: res.items as RoastingBatch[], total: res.total }
   }
@@ -39,22 +40,24 @@ export async function fetchRoastingBatches(): Promise<{
 }
 
 // ---- Complete ----
-export async function completeRoastingBatch(batchId: string): Promise<RoastingBatch> {
+export async function completeRoastingBatch(
+  batchId: string,
+  actualInputWeightGrams: number,
+  roastedAt?: string,
+): Promise<RoastingBatch> {
   if (isDemoMode) {
-    const batch = await getMock().apiCompleteBatch(batchId)
+    const m = await getMock()
+    const batch = await m.apiCompleteBatch(batchId, actualInputWeightGrams, roastedAt)
     return batch as unknown as RoastingBatch
   }
-  // Real API: complete with default roasted_at = now
   const dto: BatchCompleteRequestDto = {
-    roasted_at: new Date().toISOString(),
-    // actual_input_weight_grams must be set by the caller — but mock doesn't pass it.
-    // For real API, caller should provide the weight. The store's markComplete
-    // currently doesn't pass weight. We throw a clear error.
-    actual_input_weight_grams: 0, // invalid — will be caught
+    roasted_at: roastedAt
+      ? new Date(roastedAt).toISOString()
+      : new Date().toISOString(),
+    actual_input_weight_grams: actualInputWeightGrams,
   }
-  throw new Error(
-    '真实 API 下完成烘焙批次需要提供实际投豆量。请使用页面上的「完成」按钮。',
-  )
+  const res: RoastingBatchResponseDto = await realApi.completeRoastingBatch(batchId, dto)
+  return toRoastingBatch(res)
 }
 
 // ---- Create (demo → mock; real → backend) ----
@@ -65,8 +68,55 @@ export async function createRoastingBatch(form: {
   targetDescription?: string
 }): Promise<RoastingBatchResponseDto> {
   if (isDemoMode) {
-    return getMock().apiCreateRoastingBatch(form)
+    const m = await getMock()
+    return m.apiCreateRoastingBatch(form) as unknown as RoastingBatchResponseDto
   }
   const { toRoastingBatchCreateDto } = await import('../adapters/roastingBatch')
   return realApi.createRoastingBatch(toRoastingBatchCreateDto(form))
+}
+
+// ---- Update output weight ----
+export async function updateOutputWeight(
+  batchId: string,
+  outputWeightGrams: number,
+): Promise<RoastingBatch> {
+  if (isDemoMode) {
+    const m = await getMock()
+    const batch = await m.apiUpdateWeightOut(batchId, outputWeightGrams)
+    return batch as unknown as RoastingBatch
+  }
+  const res: RoastingBatchResponseDto = await realApi.updateOutputWeight(batchId, outputWeightGrams)
+  return toRoastingBatch(res)
+}
+
+// ---- Void ----
+export async function voidRoastingBatch(batchId: string): Promise<RoastingBatch> {
+  if (isDemoMode) {
+    // Mock has no void fn — simulate by mutating mockRoastingBatches
+    const m = await getMock()
+    const b = m.mockRoastingBatches.find((x) => x.id === batchId)
+    if (b) b.status = 'voided'
+    return b as unknown as RoastingBatch
+  }
+  const res: RoastingBatchResponseDto = await realApi.voidRoastingBatch(batchId)
+  return toRoastingBatch(res)
+}
+
+// ---- Reopen (cancel completion) ----
+export async function reopenRoastingBatch(batchId: string): Promise<RoastingBatch> {
+  if (isDemoMode) {
+    // Mock has no reopen fn — simulate by resetting fields
+    const m = await getMock()
+    const b = m.mockRoastingBatches.find((x) => x.id === batchId)
+    if (b) {
+      b.status = 'planned'
+      b.actualDate = undefined
+      b.beanWeightOut = undefined
+      b.weightLossRate = undefined
+      b.totalTime = undefined
+    }
+    return b as unknown as RoastingBatch
+  }
+  const res: RoastingBatchResponseDto = await realApi.reopenRoastingBatch(batchId)
+  return toRoastingBatch(res)
 }

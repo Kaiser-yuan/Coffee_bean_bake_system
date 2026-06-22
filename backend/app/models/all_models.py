@@ -266,7 +266,7 @@ class RoastingCurve(Base):
     stages: Mapped[dict | None] = mapped_column(JSON)
     control_changes: Mapped[dict | None] = mapped_column(JSON)
 
-    calculation_version: Mapped[str | None] = mapped_column(String(16))
+    calculation_version: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     roasting_batch = relationship("RoastingBatch", back_populates="active_curve")

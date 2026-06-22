@@ -11,7 +11,7 @@
     </div>
 
     <LoadingState v-if="loading" text="加载年度数据…" />
-    <ErrorState v-else-if="error" title="无法加载数据" :retry="true" @retry="fetchData" />
+    <ErrorState v-else-if="error" title="无法加载数据" :message="errorMsg" :retry="true" @retry="fetchData" />
 
     <template v-else-if="data">
       <!-- 核心指标 — 横向摘要条 -->
@@ -176,19 +176,30 @@
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAppStore } from '../stores/app'
-import { getDashboardData, mockGreenBeans, mockPurchaseBatches, apiCompleteBatch } from '../mock'
 import { BATCH_STATUS_LABELS } from '../types'
 import type { DashboardYearData, RoastingBatch } from '../types'
 import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
 import EmptyState from '../components/common/EmptyState.vue'
 import * as echarts from 'echarts'
+import { fetchDashboard } from '../services/dashboardService'
+import { completeRoastingBatch } from '../services/roastingBatchService'
+import {
+  fetchRoastContext,
+  invalidateRoastContext,
+  getGreenBeanByBatch,
+  type RoastContext,
+} from '../services/greenBeanContextService'
 
 const store = useAppStore()
 const router = useRouter()
 const data = ref<DashboardYearData | null>(null)
 const loading = ref(false)
 const error = ref(false)
+const errorMsg = ref('')
+
+// Green-bean context for resolving bean names (demo-aware)
+const roastContext = ref<RoastContext>({ greenBeans: [], purchaseBatches: [], roastingBatches: [] })
 
 const expandedBeans = ref<Set<string>>(new Set())
 
@@ -217,9 +228,7 @@ const pendingGrouped = computed<PendingGroup[]>(() => {
   if (!data.value) return []
   const map = new Map<string, PendingGroup>()
   for (const b of data.value.pendingBatches) {
-    const pb = mockPurchaseBatches.find(p => p.id === b.purchaseBatchId)
-    if (!pb) continue
-    const gb = mockGreenBeans.find(g => g.id === pb.greenBeanId)
+    const gb = getGreenBeanByBatch(roastContext.value, b)
     if (!gb) continue
     if (!map.has(gb.id)) {
       map.set(gb.id, {
@@ -244,15 +253,15 @@ function formatWeight(g: number) {
 }
 
 function getBeanName(purchaseBatchId: string) {
-  const pb = mockPurchaseBatches.find(p => p.id === purchaseBatchId)
+  const pb = roastContext.value.purchaseBatches.find(p => p.id === purchaseBatchId)
   if (!pb) return '-'
-  return mockGreenBeans.find(g => g.id === pb.greenBeanId)?.name || pb.greenBeanId
+  return roastContext.value.greenBeans.find(g => g.id === pb.greenBeanId)?.name || pb.greenBeanId
 }
 
 function getBeanVariety(purchaseBatchId: string) {
-  const pb = mockPurchaseBatches.find(p => p.id === purchaseBatchId)
+  const pb = roastContext.value.purchaseBatches.find(p => p.id === purchaseBatchId)
   if (!pb) return '-'
-  return mockGreenBeans.find(g => g.id === pb.greenBeanId)?.variety || '-'
+  return roastContext.value.greenBeans.find(g => g.id === pb.greenBeanId)?.variety || '-'
 }
 
 function getPurchaseLabel(id: string) {
@@ -280,25 +289,35 @@ function onConfirmComplete(batch: RoastingBatch) {
 
 async function doComplete() {
   if (!confirmBatch.value) return
-  await apiCompleteBatch(confirmBatch.value.id, confirmForm.value.beanWeightIn, confirmForm.value.actualDate)
+  await completeRoastingBatch(
+    confirmBatch.value.id,
+    confirmForm.value.beanWeightIn,
+    confirmForm.value.actualDate,
+  )
+  invalidateRoastContext()
   confirmBatch.value = null
-  data.value = getDashboardData(store.currentYear)
-  await nextTick()
-  renderCharts()
+  await fetchData()
 }
 
 async function fetchData() {
   loading.value = true
   error.value = false
+  errorMsg.value = ''
   try {
-    data.value = getDashboardData(store.currentYear)
+    const [dash, ctx] = await Promise.all([
+      fetchDashboard(store.currentYear),
+      fetchRoastContext(),
+    ])
+    data.value = dash
+    roastContext.value = ctx
     if (data.value && pendingGrouped.value.length > 0) {
       expandedBeans.value = new Set([pendingGrouped.value[0].beanId])
     }
     await nextTick()
     renderCharts()
-  } catch {
+  } catch (e) {
     error.value = true
+    errorMsg.value = e instanceof Error ? e.message : '加载失败'
   } finally {
     loading.value = false
   }
