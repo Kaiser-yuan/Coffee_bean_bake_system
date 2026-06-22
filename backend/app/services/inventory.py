@@ -21,9 +21,13 @@ async def calculate_remaining_stock(
     db: AsyncSession, purchase_batch_id: str
 ) -> int:
     """
-    remaining = total_weight_grams
+    remaining = opening_stock
               - SUM(completed, inventory_effective roasting batches actual_input_weight_grams)
               + SUM(inventory adjustments amount_grams)
+
+    ``opening_stock`` is ``opening_stock_grams`` if explicitly set, otherwise
+    ``total_weight_grams``.  For ``inventory_tracking_mode = historical_archive``
+    this defaults to 0, so the batch does not contribute phantom stock.
 
     Only batches that are both ``completed`` and ``inventory_effective=True``
     count as consumed — historical backfill / archive-only batches
@@ -38,6 +42,13 @@ async def calculate_remaining_stock(
     pb = result.scalar_one_or_none()
     if not pb:
         return 0
+
+    # Opening stock: explicit value or total_weight_grams
+    opening = (
+        pb.opening_stock_grams
+        if pb.opening_stock_grams is not None
+        else pb.total_weight_grams
+    )
 
     # Sum of completed, inventory-effective roast batch inputs
     result = await db.execute(
@@ -57,7 +68,7 @@ async def calculate_remaining_stock(
     )
     adjustment_sum = result.scalar_one()
 
-    remaining = pb.total_weight_grams - roast_consumed + adjustment_sum
+    remaining = opening - roast_consumed + adjustment_sum
     return max(0, remaining)
 
 
@@ -74,6 +85,10 @@ async def append_inventory_ledger(
     change_grams: negative for consumption, positive for returns/adjustments.
     resulting_grams is computed from the fact calculation AFTER the change
     has been applied to the DB, so it always reflects reality.
+
+    For a new purchase batch, ``change_grams`` should be the *opening stock*
+    (``opening_stock_grams ?? total_weight_grams``), NOT blindly the full
+    ``total_weight_grams``.
     """
     resulting = await calculate_remaining_stock(db, purchase_batch_id)
 

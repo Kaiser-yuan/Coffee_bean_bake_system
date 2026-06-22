@@ -1,10 +1,11 @@
 """Public evaluation submission API."""
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException
 from sqlalchemy import select, update
 
 from ..dependencies import DBSessionDep, CurrentUserDep
+from ...core.config import settings
 from ...core.exceptions import (
     NotFoundException, ValidationException,
     QuestionnaireClosedException, QuestionnaireExpiredException,
@@ -51,8 +52,11 @@ async def submit_evaluation(
         brew_method_term_id = term.id
 
     flavor_term_ids: list[str] = []
-    for flavor_value in body.flavor_notes:
-        term = await term_repo.get_or_create_value("flavor", flavor_value)
+    for flavor_value in body.flavor_notes[:50]:  # hard cap per request schema
+        if not flavor_value or not flavor_value.strip():
+            continue
+        trimmed = flavor_value.strip()[:128]  # enforce DB column length
+        term = await term_repo.get_or_create_value("flavor", trimmed)
         flavor_term_ids.append(term.id)
 
     # Calculate bean age

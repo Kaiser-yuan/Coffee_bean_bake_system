@@ -112,6 +112,8 @@ class GreenBeanWithFirstPurchaseRequest(BaseModel):
     supplier: str | None = None
     lot_number: str | None = None
     notes: str | None = None
+    inventory_tracking_mode: str | None = "normal"
+    opening_stock_grams: int | None = None
 
 
 class PurchaseBatchCreateRequest(BaseModel):
@@ -122,6 +124,8 @@ class PurchaseBatchCreateRequest(BaseModel):
     supplier: str | None = None
     lot_number: str | None = None
     notes: str | None = None
+    inventory_tracking_mode: str | None = "normal"
+    opening_stock_grams: int | None = None
 
 
 # ============================================================
@@ -387,10 +391,10 @@ class PublicQuestionnaireResponse(BaseModel):
 # ============================================================
 class EvaluationSubmitRequest(BaseModel):
     evaluator_name: str | None = Field(default=None, max_length=64)
-    evaluator_type: str | None = None
-    brew_method: str | None = None
-    drink_temperature: str | None = None
-    drink_form: str | None = None
+    evaluator_type: str | None = Field(default=None, max_length=16)
+    brew_method: str | None = Field(default=None, max_length=128)
+    drink_temperature: str | None = Field(default=None, max_length=8)
+    drink_form: str | None = Field(default=None, max_length=16)
     dry_fragrance_score: int | None = Field(default=None, ge=1, le=5)
     wet_aroma_score: int | None = Field(default=None, ge=1, le=5)
     acidity_intensity_score: int | None = Field(default=None, ge=1, le=5)
@@ -559,8 +563,8 @@ class BulkImportPreviewResponse(BaseModel):
 class BulkImportCommitItem(BaseModel):
     item_id: str
     roasted_at: datetime | None = None
-    actual_input_weight_grams: int | None = None
-    output_weight_grams: int | None = None
+    actual_input_weight_grams: int | None = Field(default=None, gt=0)
+    output_weight_grams: int | None = Field(default=None, gt=0)
     inventory_effective: bool | None = None
     source_note: str | None = None
 

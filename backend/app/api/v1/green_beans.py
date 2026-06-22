@@ -196,10 +196,21 @@ async def create_green_bean_with_first_purchase(
     await db.flush()
 
     # Create purchase batch
+    tracking_mode = getattr(body, "inventory_tracking_mode", "normal") or "normal"
+    opening_stock = getattr(body, "opening_stock_grams", None)
+    if tracking_mode == "historical_archive":
+        if opening_stock is None:
+            opening_stock = 0  # historical archive defaults to zero opening stock
+    else:
+        if opening_stock is None:
+            opening_stock = body.total_weight_grams
+
     pb = PurchaseBatch(
         green_bean_id=gb.id,
         purchase_date=datetime.fromisoformat(body.purchase_date) if body.purchase_date else datetime.now(timezone.utc),
         total_weight_grams=body.total_weight_grams,
+        inventory_tracking_mode=tracking_mode,
+        opening_stock_grams=opening_stock,
         unit_price_fen_per_kg=body.unit_price_fen_per_kg,
         moisture_content_percent=body.moisture_content_percent,
         supplier_term_id=supplier_term.id if supplier_term else None,
@@ -209,11 +220,11 @@ async def create_green_bean_with_first_purchase(
     db.add(pb)
     await db.flush()
 
-    # Record initial inventory: change = total_weight, resulting = total_weight
+    # Record initial inventory: change = opening_stock
     await append_inventory_ledger(
         db=db,
         purchase_batch_id=pb.id,
-        change_grams=body.total_weight_grams,
+        change_grams=opening_stock,
         event_type="purchase_in",
         related_entity_type="purchase_batch",
         related_entity_id=pb.id,
@@ -262,10 +273,21 @@ async def add_purchase_batch(
     if body.supplier:
         supplier_term = await term_repo.get_or_create_value("supplier", body.supplier)
 
+    tracking_mode = getattr(body, "inventory_tracking_mode", "normal") or "normal"
+    opening_stock = getattr(body, "opening_stock_grams", None)
+    if tracking_mode == "historical_archive":
+        if opening_stock is None:
+            opening_stock = 0
+    else:
+        if opening_stock is None:
+            opening_stock = body.total_weight_grams
+
     pb = PurchaseBatch(
         green_bean_id=green_bean_id,
         purchase_date=datetime.fromisoformat(body.purchase_date),
         total_weight_grams=body.total_weight_grams,
+        inventory_tracking_mode=tracking_mode,
+        opening_stock_grams=opening_stock,
         unit_price_fen_per_kg=body.unit_price_fen_per_kg,
         moisture_content_percent=body.moisture_content_percent,
         supplier_term_id=supplier_term.id if supplier_term else None,
@@ -275,11 +297,11 @@ async def add_purchase_batch(
     db.add(pb)
     await db.flush()
 
-    # Record initial inventory: change = total_weight, resulting = total_weight
+    # Record initial inventory: change = opening_stock
     await append_inventory_ledger(
         db=db,
         purchase_batch_id=pb.id,
-        change_grams=body.total_weight_grams,
+        change_grams=opening_stock,
         event_type="purchase_in",
         related_entity_type="purchase_batch",
         related_entity_id=pb.id,

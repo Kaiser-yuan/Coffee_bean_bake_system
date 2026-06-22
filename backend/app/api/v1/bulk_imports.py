@@ -46,6 +46,33 @@ async def bulk_preview(
     if time_inference_strategy and time_inference_strategy not in _ALLOWED_STRATEGIES:
         raise ValidationException(f"不支持的时间推断策略: {time_inference_strategy}")
 
+    # -- Upload limits from settings --
+    from ...core.config import settings
+    if len(files) > settings.bulk_upload_max_files:
+        raise ValidationException(
+            f"单次最多上传 {settings.bulk_upload_max_files} 个文件，本次收到 {len(files)} 个"
+        )
+    total_bytes = 0
+    for f in files:
+        # Peek size before reading fully — FastAPI UploadFile doesn't expose
+        # size natively, so we read and track.
+        content = await f.read()
+        total_bytes += len(content)
+        if len(content) > settings.upload_max_size_bytes:
+            raise ValidationException(
+                f"文件 {f.filename} 超过 {settings.upload_max_size_bytes // 1024 // 1024}MB 限制"
+            )
+    if total_bytes > settings.bulk_upload_max_total_bytes:
+        raise ValidationException(
+            f"上传总大小 {total_bytes / 1024 / 1024:.1f}MB "
+            f"超过 {settings.bulk_upload_max_total_bytes // 1024 // 1024}MB 限制"
+        )
+    # Re-seek for downstream — we've already consumed the stream.
+    # Since FastAPI's UploadFile is SpooledTemporaryFile under the hood,
+    # re-seek to start so the service layer can re-read.
+    for f in files:
+        await f.seek(0)
+
     uploaded: list[UploadedCsv] = []
     for index, f in enumerate(files):
         content = await f.read()
@@ -121,3 +148,15 @@ async def bulk_commit(
         expected_purchase_batch_id=purchase_batch_id,
         expected_mode="csv_bulk_import",
     )
+
+
+@router.post("/bulk-import-jobs/{job_id}/cancel", tags=["bulk-imports"])
+async def cancel_bulk_job(
+    job_id: str,
+    db: DBSessionDep = None,
+    _user: CurrentUserDep = None,
+):
+    """Cancel a previewed bulk-import job. Only jobs in 'previewed' status can
+    be cancelled. Committed / failed / already-cancelled jobs are rejected."""
+    from ...services.bulk_import import cancel_bulk_import_job
+    return await cancel_bulk_import_job(db=db, job_id=job_id)

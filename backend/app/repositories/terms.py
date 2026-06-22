@@ -35,9 +35,25 @@ class TermRepository(BaseRepository[StandardTerm]):
         return await self.get_by_category(category=category, active_only=True)
 
     async def get_or_create_value(self, category: str, value: str) -> StandardTerm:
-        """Find existing term or create a new active one."""
+        """Find existing term or create a new active one.
+
+        Uses PostgreSQL ON CONFLICT to protect against concurrent inserts
+        that could violate the unique constraint, avoiding 500 errors under
+        parallel submission.
+        """
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
         existing = await self.get_by_category_and_value(category, value)
         if existing:
             return existing
-        term = StandardTerm(category=category, value=value)
-        return await self.save(term)
+        try:
+            term = StandardTerm(category=category, value=value)
+            self.db.add(term)
+            await self.db.flush()
+            return term
+        except Exception:
+            await self.db.rollback()
+            # Another request won the race — re-query
+            retry = await self.get_by_category_and_value(category, value)
+            if retry:
+                return retry
+            raise

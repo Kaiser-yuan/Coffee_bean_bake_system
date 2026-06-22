@@ -23,6 +23,7 @@ from ..core.exceptions import (
     NotFoundException, ValidationException, ConflictException,
     InsufficientInventoryException,
 )
+from ..core.timezone_utils import naive_to_utc, combine_naive, now_utc, get_app_zone
 from ..models.all_models import (
     BulkImportJob, BulkImportItem, RoastingBatch, CurveFile,
 )
@@ -49,7 +50,11 @@ _FILENAME_DATE_RE = re.compile(r"(\d{2})(\d{2})(\d{2})")
 # Time inference
 # ============================================================
 def parse_client_last_modified(raw: str | None) -> datetime | None:
-    """Parse browser File.lastModified, which is epoch milliseconds."""
+    """Parse browser File.lastModified, which is epoch milliseconds.
+
+    File.lastModified is *already* an absolute epoch timestamp — it doesn't
+    need timezone reinterpretation. We preserve it as-is in UTC.
+    """
     if not raw:
         return None
     try:
@@ -90,7 +95,11 @@ def _parse_time_str(s: str | None) -> time | None:
 
 
 def _parse_csv_cooked_at(raw: str | None) -> datetime | None:
-    """Best-effort parse of the Kaleido CookDate parameter into a datetime."""
+    """Best-effort parse of the Kaleido CookDate parameter into UTC.
+
+    CookDate is a local-time string. We parse it as naive, then attach
+    the application timezone and convert to UTC.
+    """
     if not raw:
         return None
     raw = raw.strip()
@@ -105,21 +114,26 @@ def _parse_csv_cooked_at(raw: str | None) -> datetime | None:
     )
     for fmt in candidates:
         try:
-            return datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
+            parsed = datetime.strptime(raw, fmt)
+            return naive_to_utc(parsed)
         except ValueError:
             continue
     return None
 
 
 def _from_filename(filename: str) -> datetime | None:
-    """Parse a date out of a filename like ``260530_9.csv`` -> 2026-05-30."""
+    """Parse a date out of a filename like ``260530_9.csv`` -> 2026-05-30.
+
+    The date is a local calendar date — interpret in app timezone, yield UTC.
+    """
     m = _FILENAME_DATE_RE.search(filename)
     if not m:
         return None
     yy, mm, dd = int(m.group(1)), int(m.group(2)), int(m.group(3))
     year = 2000 + yy if yy < 70 else 1900 + yy
     try:
-        return datetime(year, mm, dd, tzinfo=timezone.utc)
+        d = date(year, mm, dd)
+        return combine_naive(d, time(0, 0))
     except ValueError:
         return None
 
@@ -139,9 +153,12 @@ def infer_roasted_at(
     Priority (when strategy is None/'auto'):
       1. csv_content   — Kaleido CookDate parameter
       2. filename      — leading YYMMDD in the filename
-      3. file_last_modified — browser-supplied lastModified
+      3. file_last_modified — browser-supplied lastModified (already UTC)
       4. manual        — default_roast_date + first_roast_time
       5. upload_order  — default_roast_date + first_roast_time + order spacing
+
+    All local-time sources (csv_content, filename, manual, upload_order) are
+    interpreted in the app timezone and returned as UTC.
 
     Returns (datetime|None, source_label|None).
     """
@@ -151,18 +168,24 @@ def infer_roasted_at(
     def _manual_dt() -> datetime | None:
         if base_date is None:
             return None
-        return datetime.combine(base_date, base_time, tzinfo=timezone.utc)
+        return combine_naive(base_date, base_time)
 
     def _upload_order_dt() -> datetime | None:
         if base_date is None:
             return None
         offset = (order - 1) * ROAST_SPACING_MINUTES if order > 0 else 0
-        return datetime.combine(base_date, base_time, tzinfo=timezone.utc) + timedelta(minutes=offset)
+        dt = combine_naive(base_date, base_time)
+        return dt + timedelta(minutes=offset)
 
     sources = {
-        "csv_content": lambda: _parse_csv_cooked_at(parsed.parameters.cooked_at if parsed else None),
+        "csv_content": lambda: _parse_csv_cooked_at(
+            parsed.parameters.cooked_at if parsed else None
+        ),
         "filename": lambda: _from_filename(filename),
-        "file_last_modified": lambda: client_last_modified.astimezone(timezone.utc) if client_last_modified else None,
+        "file_last_modified": lambda: (
+            client_last_modified.astimezone(timezone.utc)
+            if client_last_modified else None
+        ),
         "manual": _manual_dt,
         "upload_order": _upload_order_dt,
     }
@@ -478,12 +501,20 @@ async def commit_roast_csv_import(
                 f"文件 {item.original_filename} 的原始内容缺失，无法提交"
             )
         output_weight = sub.get("output_weight_grams")
-        if output_weight is not None and (
-            output_weight <= 0 or output_weight > actual_input
-        ):
-            raise ValidationException(
-                f"文件 {item.original_filename} 的出豆量必须大于零且不超过投豆量"
-            )
+        # 0 means "not provided" — treat as None. Only validate when
+        # the caller explicitly passes a positive or sentinel value.
+        if output_weight is not None and output_weight != 0:
+            if output_weight <= 0:
+                raise ValidationException(
+                    f"文件 {item.original_filename} 的出豆量必须大于零"
+                )
+            if output_weight > actual_input:
+                raise ValidationException(
+                    f"文件 {item.original_filename} 的出豆量 ({output_weight}g) "
+                    f"超过投豆量 ({actual_input}g)"
+                )
+        else:
+            output_weight = None
         plan.append({
             "item": item,
             "actual_input": actual_input,
@@ -638,3 +669,71 @@ async def commit_roast_csv_import(
         "total_consumed_grams": total_consumed,
         "items": result_items,
     }
+
+
+# ============================================================
+# Cancel
+# ============================================================
+async def cancel_bulk_import_job(
+    *,
+    db: AsyncSession,
+    job_id: str,
+) -> dict:
+    """Cancel a previewed bulk-import job.
+
+    Only jobs in ``previewed`` status can be cancelled. Committed or
+    already-cancelled jobs are rejected with an appropriate error.
+    """
+    job_repo = BulkImportJobRepository(db)
+    job = await job_repo.get_with_items(job_id)
+    if not job:
+        raise NotFoundException("BulkImportJob", job_id)
+    if job.status == "committed":
+        raise ConflictException(
+            code="BULK_IMPORT_ALREADY_COMMITTED",
+            message="已提交的导入任务不能取消",
+        )
+    if job.status == "cancelled":
+        raise ConflictException(
+            code="BULK_IMPORT_ALREADY_CANCELLED",
+            message="导入任务已取消",
+        )
+    if job.status == "failed":
+        raise ConflictException(
+            code="BULK_IMPORT_FAILED",
+            message="导入任务已失败，不能取消",
+        )
+    job.status = "cancelled"
+    await db.flush()
+    return {"job_id": job.id, "status": "cancelled"}
+
+
+async def expire_stale_bulk_jobs(db: AsyncSession) -> int:
+    """Cancel all previewed jobs older than ``settings.bulk_job_expiry_seconds``.
+
+    Returns the number of jobs expired. Call this from a periodic task
+    (cron / background scheduler) or from a dedicated admin endpoint.
+    """
+    from datetime import timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(
+        seconds=settings.bulk_job_expiry_seconds
+    )
+    result = await db.execute(
+        select(BulkImportJob)
+        .where(
+            BulkImportJob.status == "previewed",
+            BulkImportJob.created_at < cutoff,
+        )
+        .with_for_update()
+    )
+    stale_jobs = list(result.scalars().all())
+    for job in stale_jobs:
+        job.status = "cancelled"
+    if stale_jobs:
+        await db.flush()
+        logger.info(
+            "Expired %d stale previewed bulk-import jobs (cutoff %s)",
+            len(stale_jobs),
+            cutoff.isoformat(),
+        )
+    return len(stale_jobs)

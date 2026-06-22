@@ -181,8 +181,9 @@ const computedDimensions = computed(() => {
 })
 
 const shareUrl = computed(() => {
-  const base = window.location.origin + (window.location.pathname || '')
-  return `${base}#/eval/${questionnaire.value?.shareCode || ''}`
+  // Use import.meta.env.BASE_URL so the path works on root and sub-path deploys.
+  const base = window.location.origin + (import.meta.env.BASE_URL || '/')
+  return `${base}${base.endsWith('/') ? '' : '/'}#/eval/${questionnaire.value?.shareCode || ''}`
 })
 
 const getBeanNameForDetail = computed(() => {

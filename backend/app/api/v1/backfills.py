@@ -45,6 +45,27 @@ async def backfill_preview(
     if time_inference_strategy and time_inference_strategy not in _ALLOWED_STRATEGIES:
         raise ValidationException(f"不支持的时间推断策略: {time_inference_strategy}")
 
+    from ...core.config import settings
+    if len(files) > settings.bulk_upload_max_files:
+        raise ValidationException(
+            f"单次最多上传 {settings.bulk_upload_max_files} 个文件，本次收到 {len(files)} 个"
+        )
+    total_bytes = 0
+    for f in files:
+        content = await f.read()
+        total_bytes += len(content)
+        if len(content) > settings.upload_max_size_bytes:
+            raise ValidationException(
+                f"文件 {f.filename} 超过 {settings.upload_max_size_bytes // 1024 // 1024}MB 限制"
+            )
+    if total_bytes > settings.bulk_upload_max_total_bytes:
+        raise ValidationException(
+            f"上传总大小 {total_bytes / 1024 / 1024:.1f}MB "
+            f"超过 {settings.bulk_upload_max_total_bytes // 1024 // 1024}MB 限制"
+        )
+    for f in files:
+        await f.seek(0)
+
     uploaded: list[UploadedCsv] = []
     for index, f in enumerate(files):
         content = await f.read()

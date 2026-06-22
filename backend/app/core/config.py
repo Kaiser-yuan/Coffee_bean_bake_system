@@ -36,6 +36,21 @@ class Settings(BaseSettings):
     # Auth
     allow_first_user_registration: bool = True
 
+    # Timezone — naive timestamps from CSV / filenames / forms are assumed to be
+    # in this zone and converted to UTC before persisting.
+    app_timezone: str = "Asia/Shanghai"
+
+    # Bulk upload limits
+    bulk_upload_max_files: int = 20
+    bulk_upload_max_total_bytes: int = 104_857_600  # 100 MB
+
+    # Bulk job expiry (seconds)
+    bulk_job_expiry_seconds: int = 86400  # 24 hours
+
+    # Public evaluation rate limit
+    public_evaluation_rate_limit_per_minute: int = 10
+    public_evaluation_repeat_window_seconds: int = 300
+
     # Public frontend URL for share links
     public_frontend_base_url: str = "http://localhost:5173"
 

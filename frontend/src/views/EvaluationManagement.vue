@@ -131,8 +131,8 @@ async function closeQ(id: string) {
 }
 
 function copyLink(q: Questionnaire) {
-  const base = window.location.origin + (window.location.pathname || '')
-  const url = `${base}#/eval/${q.shareCode}`
+  const base = window.location.origin + (import.meta.env.BASE_URL || '/')
+  const url = `${base}${base.endsWith('/') ? '' : '/'}#/eval/${q.shareCode}`
   navigator.clipboard.writeText(url).then(() => {
     alert('已复制评价链接')
   })

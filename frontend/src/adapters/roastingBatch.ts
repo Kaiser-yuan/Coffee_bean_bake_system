@@ -38,5 +38,8 @@ export function toRoastingBatch(dto: RoastingBatchResponseDto): RoastingBatch {
     evaluationStatus: (dto.completeness && !dto.completeness.missing_evaluation ? 'closed' : 'none') as EvaluationStatus,
     reviewStatus: (dto.completeness && !dto.completeness.missing_review ? 'done' : 'none') as ReviewStatus,
     colorTag: dto.color_tag || undefined,
+    entryMode: dto.entry_mode || undefined,
+    inventoryEffective: dto.inventory_effective ?? undefined,
+    sourceNote: dto.source_note || undefined,
   }
 }

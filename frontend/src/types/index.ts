@@ -125,6 +125,12 @@ export interface RoastingBatch {
   csvFileName?: string
   csvUploadTime?: string
   colorTag?: string // hex color for consistent identification
+  /** 录入方式: manual_plan | manual_completed | csv_bulk_import | historical_backfill */
+  entryMode?: string
+  /** 是否影响库存 */
+  inventoryEffective?: boolean
+  /** 数据来源备注 */
+  sourceNote?: string
 }
 
 export type CurveAlignBy =

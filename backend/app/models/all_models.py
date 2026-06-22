@@ -98,6 +98,14 @@ class PurchaseBatch(Base):
     green_bean_id: Mapped[str] = mapped_column(UUID(as_uuid=False), ForeignKey("green_beans.id"), nullable=False, index=True)
     purchase_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     total_weight_grams: Mapped[int] = mapped_column(Integer, nullable=False)
+    inventory_tracking_mode: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="normal",
+        comment="normal|historical_archive — normal tracks stock; historical_archive is archive-only"
+    )
+    opening_stock_grams: Mapped[int | None] = mapped_column(
+        Integer,
+        comment="Opening stock when this batch entered the system. NULL = total_weight_grams"
+    )
     moisture_content_percent: Mapped[float | None] = mapped_column(Float)
     unit_price_fen_per_kg: Mapped[int | None] = mapped_column(BigInteger, comment="单价：分/公斤")
     total_price_fen: Mapped[int | None] = mapped_column(BigInteger, comment="总价：分")
