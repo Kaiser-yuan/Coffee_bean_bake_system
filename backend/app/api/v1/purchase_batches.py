@@ -34,6 +34,8 @@ async def get_purchase_batch(
         green_bean_id=pb.green_bean_id,
         purchase_date=pb.purchase_date.isoformat() if pb.purchase_date else None,
         total_weight_grams=pb.total_weight_grams,
+        inventory_tracking_mode=pb.inventory_tracking_mode,
+        opening_stock_grams=pb.opening_stock_grams,
         moisture_content_percent=pb.moisture_content_percent,
         unit_price_fen_per_kg=pb.unit_price_fen_per_kg,
         total_price_fen=pb.total_price_fen,

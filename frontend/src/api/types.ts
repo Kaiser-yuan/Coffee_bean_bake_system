@@ -57,6 +57,9 @@ export type RoastingBatchTreeDto = {
   development_ratio_percent: number | null
   target_description: string | null
   color_tag: string | null
+  entry_mode: string | null
+  inventory_effective: boolean | null
+  source_note: string | null
 }
 
 export type PurchaseBatchTreeDto = {
@@ -64,6 +67,8 @@ export type PurchaseBatchTreeDto = {
   green_bean_id: string
   purchase_date: string | null
   total_weight_grams: number
+  inventory_tracking_mode: string | null
+  opening_stock_grams: number | null
   moisture_content_percent: number | null
   unit_price_fen_per_kg: number | null
   total_price_fen: number | null
@@ -105,6 +110,8 @@ export type GreenBeanWithFirstPurchaseRequestDto = {
   supplier?: string | null
   lot_number?: string | null
   notes?: string | null
+  inventory_tracking_mode?: 'normal' | 'historical_archive' | null
+  opening_stock_grams?: number | null
 }
 
 export type PurchaseBatchCreateRequestDto = {
@@ -115,6 +122,8 @@ export type PurchaseBatchCreateRequestDto = {
   supplier?: string | null
   lot_number?: string | null
   notes?: string | null
+  inventory_tracking_mode?: 'normal' | 'historical_archive' | null
+  opening_stock_grams?: number | null
 }
 
 export type RoastingBatchCreateRequestDto = {
@@ -265,10 +274,10 @@ export type EvaluationResponseDto = {
   id: string
   questionnaire_id: string
   evaluator_name: string | null
-  evaluator_type: string | null
+  evaluator_type: 'roaster' | 'colleague' | 'customer' | null
   brew_method: string | null
-  drink_temperature: string | null
-  drink_form: string | null
+  drink_temperature: '热饮' | '冷饮' | null
+  drink_form: '黑咖啡' | '加奶' | '其他' | null
   dry_fragrance_score: number | null
   wet_aroma_score: number | null
   acidity_intensity_score: number | null
@@ -277,6 +286,7 @@ export type EvaluationResponseDto = {
   aftertaste_score: number | null
   overall_preference_score: number | null
   flavor_notes: string[]
+  free_flavor_description: string | null
   free_notes: string | null
   bean_age_days: number | null
   submitted_at: string | null
@@ -289,10 +299,12 @@ export type EvaluationListResponseDto = {
 
 export type EvaluationSubmitRequestDto = {
   evaluator_name?: string | null
-  evaluator_type?: string | null
+  evaluator_type?: 'roaster' | 'colleague' | 'customer' | null
   brew_method?: string | null
-  drink_temperature?: string | null
-  drink_form?: string | null
+  /** Preferred: existing active standard term id. Takes precedence over brew_method. */
+  brew_method_term_id?: string | null
+  drink_temperature?: '热饮' | '冷饮' | null
+  drink_form?: '黑咖啡' | '加奶' | '其他' | null
   dry_fragrance_score?: number | null
   wet_aroma_score?: number | null
   acidity_intensity_score?: number | null
@@ -301,6 +313,10 @@ export type EvaluationSubmitRequestDto = {
   aftertaste_score?: number | null
   overall_preference_score: number
   flavor_notes: string[]
+  /** Preferred: existing active standard term ids. Takes precedence over flavor_notes. */
+  flavor_term_ids?: string[] | null
+  /** Free-text flavor description — stored separately, never creates a standard term. */
+  free_flavor_description?: string | null
   free_notes?: string | null
 }
 

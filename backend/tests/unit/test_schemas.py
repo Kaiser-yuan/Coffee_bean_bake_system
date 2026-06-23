@@ -13,8 +13,6 @@ from app.schemas.all_schemas import (
     NextRoastPlanRequest,
     BulkImportCommitItem,
 )
-
-
 class TestRoastingBatchCreate:
     def test_valid_request(self):
         req = RoastingBatchCreateRequest(
@@ -156,3 +154,74 @@ def test_bulk_commit_item_python_dump_keeps_datetime():
     roasted_at = datetime.now(timezone.utc)
     item = BulkImportCommitItem(item_id="item-1", roasted_at=roasted_at)
     assert item.model_dump(mode="python")["roasted_at"] == roasted_at
+
+
+class TestEvaluationControlledFields:
+    """P1-2: controlled enums + length limits on the public evaluation form."""
+
+    def test_valid_controlled_submission(self):
+        req = EvaluationSubmitRequest(
+            overall_preference_score=5,
+            evaluator_type="customer",
+            drink_temperature="热饮",
+            drink_form="黑咖啡",
+            brew_method="手冲",
+            flavor_notes=["花香", "柑橘"],
+            free_flavor_description="带有明显的茉莉花香",
+            free_notes="很好喝",
+        )
+        assert req.evaluator_type == "customer"
+        assert req.drink_temperature == "热饮"
+        assert req.free_flavor_description == "带有明显的茉莉花香"
+
+    def test_invalid_evaluator_type_rejected(self):
+        with pytest.raises(ValidationError):
+            EvaluationSubmitRequest(
+                overall_preference_score=5, evaluator_type="alien"
+            )
+
+    def test_invalid_drink_temperature_rejected(self):
+        with pytest.raises(ValidationError):
+            EvaluationSubmitRequest(
+                overall_preference_score=5, drink_temperature="warm"
+            )
+
+    def test_invalid_drink_form_rejected(self):
+        with pytest.raises(ValidationError):
+            EvaluationSubmitRequest(
+                overall_preference_score=5, drink_form="espresso"
+            )
+
+    def test_flavor_note_element_over_128_rejected(self):
+        # list-level max_length (50) is fine; element length 128 enforced.
+        with pytest.raises(ValidationError):
+            EvaluationSubmitRequest(
+                overall_preference_score=5, flavor_notes=["x" * 129]
+            )
+
+    def test_flavor_note_list_over_50_rejected(self):
+        with pytest.raises(ValidationError):
+            EvaluationSubmitRequest(
+                overall_preference_score=5, flavor_notes=["x"] * 51
+            )
+
+    def test_free_flavor_description_over_2000_rejected(self):
+        with pytest.raises(ValidationError):
+            EvaluationSubmitRequest(
+                overall_preference_score=5, free_flavor_description="x" * 2001
+            )
+
+    def test_free_notes_over_2000_rejected(self):
+        with pytest.raises(ValidationError):
+            EvaluationSubmitRequest(
+                overall_preference_score=5, free_notes="x" * 2001
+            )
+
+    def test_term_id_fields_accepted(self):
+        req = EvaluationSubmitRequest(
+            overall_preference_score=5,
+            brew_method_term_id="term-1",
+            flavor_term_ids=["term-2", "term-3"],
+        )
+        assert req.brew_method_term_id == "term-1"
+        assert req.flavor_term_ids == ["term-2", "term-3"]

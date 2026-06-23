@@ -331,6 +331,9 @@ class CuppingEvaluation(Base):
     overall_preference_score: Mapped[int | None] = mapped_column(Integer, nullable=False)
 
     flavor_term_ids: Mapped[dict | None] = mapped_column(JSON, comment="Array of standard_term UUIDs")
+    free_flavor_description: Mapped[str | None] = mapped_column(
+        Text, comment="自由风味描述（不进入标准词表）"
+    )
     free_notes: Mapped[str | None] = mapped_column(Text)
 
     bean_age_days: Mapped[int | None] = mapped_column(Integer)

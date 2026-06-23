@@ -14,6 +14,7 @@ and parse_kaleido_m1 / parse_and_activate_curve).
 import logging
 import random
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta, date, time
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,14 +41,26 @@ from ..services.curve import parse_and_activate_curve
 logger = logging.getLogger("coffee-roast.bulk_import")
 
 BATCH_COLORS = ["#df5b45", "#3478d4", "#1f9d68", "#8b5cc7", "#e5a029", "#d94b4b"]
-# Default spacing between consecutive roasts when assigning times by upload order.
-ROAST_SPACING_MINUTES = 45
 
 _FILENAME_DATE_RE = re.compile(r"(\d{2})(\d{2})(\d{2})")
+# Trailing ``_N`` on the filename stem → pot order (e.g. ``260621_2.csv`` -> 2).
+_FILENAME_POT_RE = re.compile(r"_(\d+)$")
 
 
 # ============================================================
 # Time inference
+#
+# Date and time are resolved *independently*, then combined. This fixes the
+# original bug where the filename strategy returned a full midnight datetime
+# and Auto returned immediately — so two same-day files (``260621_1.csv``,
+# ``260621_2.csv``) with no CookDate both landed on 00:00.
+#
+#   date  = csv CookDate date | filename date | manual date | lastModified local date
+#   time  = csv CookDate time | first-pot time + (pot_order-1)*spacing | lastModified local time
+#
+# When the filename carries a pot-order suffix (``_2``), that order drives the
+# time spacing — so out-of-order uploads (``_2`` before ``_1``) still come out
+# ``_1`` < ``_2``. The 45-minute spacing lives in ``settings.roast_spacing_minutes``.
 # ============================================================
 def parse_client_last_modified(raw: str | None) -> datetime | None:
     """Parse browser File.lastModified, which is epoch milliseconds.
@@ -94,37 +107,70 @@ def _parse_time_str(s: str | None) -> time | None:
     return None
 
 
+def _parse_csv_cooked_at_parts(raw: str | None) -> tuple[date | None, time | None]:
+    """Split a local-time CookDate string into ``(local_date, local_time)``.
+
+    ``time`` is ``None`` when CookDate is date-only. The values are app-local
+    (naive) — ``combine_naive`` attaches the app timezone before UTC conversion.
+    """
+    if not raw:
+        return None, None
+    raw = raw.strip()
+    datetime_fmts = (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y/%m/%d %H:%M:%S",
+        "%Y/%m/%d %H:%M",
+        "%m/%d/%Y %H:%M",
+    )
+    for fmt in datetime_fmts:
+        try:
+            parsed = datetime.strptime(raw, fmt)
+            return parsed.date(), parsed.time()
+        except ValueError:
+            continue
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(raw, fmt).date(), None
+        except ValueError:
+            continue
+    return None, None
+
+
 def _parse_csv_cooked_at(raw: str | None) -> datetime | None:
     """Best-effort parse of the Kaleido CookDate parameter into UTC.
 
     CookDate is a local-time string. We parse it as naive, then attach
     the application timezone and convert to UTC.
     """
-    if not raw:
+    d, t = _parse_csv_cooked_at_parts(raw)
+    if d is None:
         return None
-    raw = raw.strip()
-    candidates = (
-        "%Y-%m-%d %H:%M:%S",
-        "%Y-%m-%d %H:%M",
-        "%Y/%m/%d %H:%M:%S",
-        "%Y/%m/%d %H:%M",
-        "%Y-%m-%d",
-        "%Y/%m/%d",
-        "%m/%d/%Y %H:%M",
-    )
-    for fmt in candidates:
-        try:
-            parsed = datetime.strptime(raw, fmt)
-            return naive_to_utc(parsed)
-        except ValueError:
-            continue
-    return None
+    return combine_naive(d, t or time(0, 0))
 
 
-def _from_filename(filename: str) -> datetime | None:
-    """Parse a date out of a filename like ``260530_9.csv`` -> 2026-05-30.
+def parse_filename_pot_order(filename: str) -> int | None:
+    """Parse the pot-order suffix from ``260621_2.csv`` -> 2.
 
-    The date is a local calendar date — interpret in app timezone, yield UTC.
+    Matches a trailing ``_N`` on the filename stem (before the extension).
+    Returns ``None`` when there is no suffix, or the suffix is non-positive.
+    """
+    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
+    m = _FILENAME_POT_RE.search(stem)
+    if not m:
+        return None
+    try:
+        n = int(m.group(1))
+    except ValueError:
+        return None
+    return n if n > 0 else None
+
+
+def _from_filename_date(filename: str) -> date | None:
+    """Parse a calendar date out of a filename like ``260530_9.csv`` -> 2026-05-30.
+
+    The date is a local calendar date; it is combined with a time elsewhere
+    and interpreted in the app timezone.
     """
     m = _FILENAME_DATE_RE.search(filename)
     if not m:
@@ -132,10 +178,37 @@ def _from_filename(filename: str) -> datetime | None:
     yy, mm, dd = int(m.group(1)), int(m.group(2)), int(m.group(3))
     year = 2000 + yy if yy < 70 else 1900 + yy
     try:
-        d = date(year, mm, dd)
-        return combine_naive(d, time(0, 0))
+        return date(year, mm, dd)
     except ValueError:
         return None
+
+
+@dataclass
+class InferredRoast:
+    """Result of time inference for one CSV.
+
+    ``source`` is a composite label persisted on the item/batch (fits the
+    existing ``roasted_at_source`` column). ``date_source``/``time_source``
+    are the split sources surfaced in the preview payload.
+    """
+    roasted_at: datetime | None
+    source: str | None
+    date_source: str | None
+    time_source: str | None
+
+
+def _composite_source(date_source: str | None, time_source: str | None) -> str | None:
+    """Build a single source label from the split sources.
+
+    ``filename`` date + ``upload_order`` time -> ``filename+upload_order``.
+    When the two sources agree (e.g. both ``csv_content``), the bare label
+    is returned. ``None`` when no date source resolved at all.
+    """
+    if date_source is None:
+        return None
+    if time_source is None or time_source == date_source:
+        return date_source
+    return f"{date_source}+{time_source}"
 
 
 def infer_roasted_at(
@@ -146,60 +219,101 @@ def infer_roasted_at(
     default_roast_date: str | None,
     first_roast_time: str | None,
     order: int,
+    pot_order: int | None = None,
     strategy: str | None,
-) -> tuple[datetime | None, str | None]:
-    """Infer the roasted_at timestamp for one CSV.
+) -> InferredRoast:
+    """Infer the roasted_at timestamp for one CSV by resolving a date and a
+    time independently, then combining them.
 
-    Priority (when strategy is None/'auto'):
-      1. csv_content   — Kaleido CookDate parameter
-      2. filename      — leading YYMMDD in the filename
-      3. file_last_modified — browser-supplied lastModified (already UTC)
-      4. manual        — default_roast_date + first_roast_time
-      5. upload_order  — default_roast_date + first_roast_time + order spacing
+    Date priority (auto): CSV CookDate date → filename date → manual date →
+    File.lastModified local date.
 
-    All local-time sources (csv_content, filename, manual, upload_order) are
-    interpreted in the app timezone and returned as UTC.
+    Time priority (auto): CSV CookDate time → first-pot time + (pot_order-1)*
+    spacing → File.lastModified local time → midnight.
 
-    Returns (datetime|None, source_label|None).
+    The spacing offset uses the *pot order* parsed from the filename suffix
+    (``_2``) when present, otherwise the sequential display order. This makes
+    out-of-order uploads (``_2`` before ``_1``) still resolve ``_1`` < ``_2``.
+
+    All local-time sources are interpreted in the app timezone and returned as
+    UTC. ``File.lastModified`` is absolute epoch-ms and is only projected to
+    app-local wall clock when used as a fallback source — never reinterpreted.
     """
-    base_date = _parse_date_str(default_roast_date)
-    base_time = _parse_time_str(first_roast_time) or time(0, 0)
+    spacing = settings.roast_spacing_minutes
+    csv_date, csv_time = _parse_csv_cooked_at_parts(
+        parsed.parameters.cooked_at if parsed else None
+    )
+    filename_date = _from_filename_date(filename)
+    manual_date = _parse_date_str(default_roast_date)
+    lastmod_local = (
+        client_last_modified.astimezone(get_app_zone())
+        if client_last_modified else None
+    )
+    lastmod_date = lastmod_local.date() if lastmod_local else None
+    lastmod_time = lastmod_local.time() if lastmod_local else None
+    base_time = _parse_time_str(first_roast_time)
 
-    def _manual_dt() -> datetime | None:
-        if base_date is None:
-            return None
-        return combine_naive(base_date, base_time)
+    strat = strategy if (strategy and strategy != "auto") else None
 
-    def _upload_order_dt() -> datetime | None:
-        if base_date is None:
-            return None
-        offset = (order - 1) * ROAST_SPACING_MINUTES if order > 0 else 0
-        dt = combine_naive(base_date, base_time)
-        return dt + timedelta(minutes=offset)
+    # --- resolve DATE (value, source) ---
+    if strat == "csv_content":
+        chosen_date, date_src = csv_date, "csv_content"
+    elif strat == "filename":
+        chosen_date, date_src = filename_date, "filename"
+    elif strat == "file_last_modified":
+        chosen_date, date_src = lastmod_date, "file_last_modified"
+    elif strat in ("manual", "upload_order"):
+        chosen_date, date_src = manual_date, "manual"
+    else:  # auto
+        chosen_date, date_src = next(
+            ((d, s) for d, s in (
+                (csv_date, "csv_content"),
+                (filename_date, "filename"),
+                (manual_date, "manual"),
+                (lastmod_date, "file_last_modified"),
+            ) if d is not None),
+            (None, None),
+        )
 
-    sources = {
-        "csv_content": lambda: _parse_csv_cooked_at(
-            parsed.parameters.cooked_at if parsed else None
-        ),
-        "filename": lambda: _from_filename(filename),
-        "file_last_modified": lambda: (
-            client_last_modified.astimezone(timezone.utc)
-            if client_last_modified else None
-        ),
-        "manual": _manual_dt,
-        "upload_order": _upload_order_dt,
-    }
+    if chosen_date is None:
+        return InferredRoast(None, None, None, None)
 
-    if strategy and strategy != "auto" and strategy in sources:
-        val = sources[strategy]()
-        return val, (strategy if val else None)
+    # --- resolve TIME (naive datetime on chosen_date, source) ---
+    # Pot order drives spacing when present; else sequential display order.
+    seq = pot_order if pot_order else max(order, 1)
 
-    # Auto priority
-    for key in ("csv_content", "filename", "file_last_modified", "manual", "upload_order"):
-        val = sources[key]()
-        if val is not None:
-            return val, key
-    return None, None
+    def _at(t: time | None, src: str | None, offset_minutes: int = 0):
+        """Combine chosen_date + time (+ offset) as a naive local datetime.
+
+        Offset is applied via timedelta so a late pot crossing midnight still
+        advances the date instead of wrapping the time-of-day.
+        """
+        naive = datetime.combine(chosen_date, t or time(0, 0))
+        if offset_minutes:
+            naive += timedelta(minutes=offset_minutes)
+        return naive, src
+
+    if strat == "csv_content":
+        naive, time_src = _at(csv_time, "csv_content" if csv_time else None)
+    elif strat == "file_last_modified":
+        naive, time_src = _at(lastmod_time, "file_last_modified" if lastmod_time else None)
+    elif strat == "upload_order":
+        naive, time_src = _at(base_time, "upload_order" if base_time else None,
+                              (seq - 1) * spacing)
+    elif strat == "manual":
+        naive, time_src = _at(base_time, "manual" if base_time else None)
+    else:  # auto time priority
+        if csv_time is not None:
+            naive, time_src = _at(csv_time, "csv_content")
+        elif base_time is not None:
+            naive, time_src = _at(base_time, "upload_order", (seq - 1) * spacing)
+        elif lastmod_time is not None:
+            naive, time_src = _at(lastmod_time, "file_last_modified")
+        else:
+            naive, time_src = _at(time(0, 0), None)
+
+    roasted = naive_to_utc(naive)
+    return InferredRoast(roasted, _composite_source(date_src, time_src), date_src, time_src)
 
 
 # ============================================================
@@ -272,6 +386,21 @@ async def preview_roast_csv_import(
     if mode not in ("csv_bulk_import", "historical_backfill"):
         raise ValidationException(f"未知的导入模式: {mode}")
 
+    # Opportunistic cleanup — expire stale previewed jobs before creating a
+    # new one (low-frequency, best-effort; a periodic task is the real guarantee).
+    from ..core.config import settings as _s
+    from datetime import timedelta as _td
+    from sqlalchemy import select as _sel, update as _upd
+    stale_cutoff = datetime.now(timezone.utc) - _td(seconds=_s.bulk_job_expiry_seconds)
+    await db.execute(
+        _upd(BulkImportJob)
+        .where(
+            BulkImportJob.status == "previewed",
+            BulkImportJob.created_at < stale_cutoff,
+        )
+        .values(status="cancelled")
+    )
+
     purchase_batch = await PurchaseBatchRepository(db).get_by_id(purchase_batch_id)
     if not purchase_batch:
         raise NotFoundException("PurchaseBatch", purchase_batch_id)
@@ -303,9 +432,25 @@ async def preview_roast_csv_import(
 
     duplicate_hashes = await find_duplicate_hashes(db, purchase_batch_id, hashes)
 
+    # Parse the pot-order suffix from each filename. When any file carries a
+    # suffix, sort the whole batch by pot order so preview display follows the
+    # real roast sequence (``_1`` before ``_2``) regardless of upload order;
+    # otherwise fall back to upload order. ``order`` below is the sequential
+    # display order, while ``pot_order`` drives the time spacing.
+    pot_orders = [parse_filename_pot_order(uf.filename) for (uf, _) in parsed_files]
+    if any(p is not None for p in pot_orders):
+        order_indices = sorted(
+            range(len(parsed_files)),
+            key=lambda i: (0, pot_orders[i]) if pot_orders[i] is not None else (1, i),
+        )
+    else:
+        order_indices = list(range(len(parsed_files)))
+
     items_payload: list[dict] = []
     seen_hashes: set[str] = set()
-    for order, (uf, parsed) in enumerate(parsed_files, start=1):
+    for display_order, i in enumerate(order_indices, start=1):
+        uf, parsed = parsed_files[i]
+        pot_order = pot_orders[i]
         if parsed is None:
             try:
                 reparsed = parse_kaleido_m1(uf.content, uf.filename)
@@ -318,7 +463,7 @@ async def preview_roast_csv_import(
                     file_hash=file_hash,
                     file_size_bytes=len(uf.content),
                     client_last_modified_at=uf.client_last_modified,
-                    display_order=order,
+                    display_order=display_order,
                     parse_status="failed",
                     parse_error_message=str(e),
                     warnings=None,
@@ -333,6 +478,9 @@ async def preview_roast_csv_import(
                     "file_size_bytes": len(uf.content),
                     "inferred_roasted_at": None,
                     "roasted_at_source": None,
+                    "roasted_date_source": None,
+                    "roasted_time_source": None,
+                    "pot_order": pot_order,
                     "input_weight_grams": default_input_weight_grams,
                     "output_weight_grams": None,
                     "inventory_effective": inventory_effective_default,
@@ -345,13 +493,14 @@ async def preview_roast_csv_import(
                 continue
             parsed = reparsed
 
-        inferred_dt, source = infer_roasted_at(
+        inferred = infer_roasted_at(
             filename=uf.filename,
             parsed=parsed,
             client_last_modified=uf.client_last_modified,
             default_roast_date=default_roast_date,
             first_roast_time=first_roast_time,
-            order=order,
+            order=display_order,
+            pot_order=pot_order,
             strategy=time_inference_strategy,
         )
         summary = _build_preview_summary(parsed)
@@ -364,9 +513,9 @@ async def preview_roast_csv_import(
             file_hash=parsed.file_hash,
             file_size_bytes=len(uf.content),
             client_last_modified_at=uf.client_last_modified,
-            inferred_roasted_at=inferred_dt,
-            roasted_at_source=source,
-            display_order=order,
+            inferred_roasted_at=inferred.roasted_at,
+            roasted_at_source=inferred.source,
+            display_order=display_order,
             parse_status="parsed",
             parse_error_message=None,
             warnings={"items": warnings} if warnings else None,
@@ -380,8 +529,11 @@ async def preview_roast_csv_import(
             "filename": uf.filename,
             "file_hash": parsed.file_hash,
             "file_size_bytes": len(uf.content),
-            "inferred_roasted_at": inferred_dt.isoformat() if inferred_dt else None,
-            "roasted_at_source": source,
+            "inferred_roasted_at": inferred.roasted_at.isoformat() if inferred.roasted_at else None,
+            "roasted_at_source": inferred.source,
+            "roasted_date_source": inferred.date_source,
+            "roasted_time_source": inferred.time_source,
+            "pot_order": pot_order,
             "input_weight_grams": default_input_weight_grams,
             "output_weight_grams": None,
             "inventory_effective": inventory_effective_default,
@@ -483,8 +635,10 @@ async def commit_roast_csv_import(
                 code="BULK_IMPORT_ITEM_ALREADY_COMMITTED",
                 message=f"文件 {item.original_filename} 已生成烘焙批次",
             )
-        actual_input = sub.get("actual_input_weight_grams") or job.default_input_weight_grams
-        if not actual_input or actual_input <= 0:
+        actual_input = sub.get("actual_input_weight_grams")
+        if actual_input is None:
+            actual_input = job.default_input_weight_grams
+        if actual_input is None or actual_input <= 0:
             raise ValidationException(
                 f"文件 {item.original_filename} 缺少投豆量，无法提交"
             )
@@ -501,9 +655,8 @@ async def commit_roast_csv_import(
                 f"文件 {item.original_filename} 的原始内容缺失，无法提交"
             )
         output_weight = sub.get("output_weight_grams")
-        # 0 means "not provided" — treat as None. Only validate when
-        # the caller explicitly passes a positive or sentinel value.
-        if output_weight is not None and output_weight != 0:
+        # 0 is an illegal weight, not a sentinel — use None for "not provided".
+        if output_weight is not None:
             if output_weight <= 0:
                 raise ValidationException(
                     f"文件 {item.original_filename} 的出豆量必须大于零"
@@ -704,6 +857,7 @@ async def cancel_bulk_import_job(
             message="导入任务已失败，不能取消",
         )
     job.status = "cancelled"
+    job.notes = f"cancelled_at={datetime.now(timezone.utc).isoformat()}"
     await db.flush()
     return {"job_id": job.id, "status": "cancelled"}
 
@@ -729,6 +883,7 @@ async def expire_stale_bulk_jobs(db: AsyncSession) -> int:
     stale_jobs = list(result.scalars().all())
     for job in stale_jobs:
         job.status = "cancelled"
+        job.notes = f"expired_at={datetime.now(timezone.utc).isoformat()}"
     if stale_jobs:
         await db.flush()
         logger.info(

@@ -38,6 +38,9 @@ export interface BulkImportPreviewItemDto {
   file_size_bytes: number
   inferred_roasted_at: string | null
   roasted_at_source: RoastedAtSource | null
+  roasted_date_source: string | null
+  roasted_time_source: string | null
+  pot_order: number | null
   input_weight_grams: number | null
   output_weight_grams: number | null
   inventory_effective: boolean
@@ -98,6 +101,13 @@ export interface PreviewParams {
   default_roast_date?: string
   first_roast_time?: string
   time_inference_strategy?: TimeInferenceStrategy
+}
+
+export function cancelBulkImportJob(jobId: string): Promise<{ job_id: string; status: string }> {
+  return apiRequest<{ job_id: string; status: string }>(
+    `/bulk-import-jobs/${jobId}/cancel`,
+    { method: 'POST', auth: true },
+  )
 }
 
 export function buildPreviewForm(files: File[], params: PreviewParams): FormData {

@@ -1,7 +1,7 @@
 """Public evaluation submission API."""
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request
 from sqlalchemy import select, update
 
 from ..dependencies import DBSessionDep, CurrentUserDep
@@ -14,6 +14,9 @@ from ...models.all_models import CuppingEvaluation, Questionnaire, RoastingBatch
 from ...repositories.evaluations import EvaluationRepository
 from ...repositories.questionnaires import QuestionnaireRepository
 from ...services.questionnaire import compute_bean_age_days, is_expired
+from ...services.public_evaluation import (
+    resolve_brew_method_term, resolve_flavor_term_ids, throttle,
+)
 from ...schemas.all_schemas import (
     EvaluationSubmitRequest, EvaluationResponse,
     EvaluationStatsResponse, DimensionSummary, FlavorFrequency,
@@ -29,7 +32,14 @@ async def submit_evaluation(
     db: DBSessionDep = None,
     request: Request = None,
 ):
-    """Submit a public evaluation (no auth required)."""
+    """Submit a public evaluation (no auth required).
+
+    The public form may only reference *active* standard terms — unknown or
+    inactive brew methods / flavor notes return 422 and never create terms.
+    Free-text flavor descriptions are stored separately and never enter the
+    standard_terms table. Submissions are rate-limited and de-duplicated per
+    hashed client identifier.
+    """
     q_repo = QuestionnaireRepository(db)
     q = await q_repo.get_by_share_code(share_code)
     if not q:
@@ -41,23 +51,13 @@ async def submit_evaluation(
     if is_expired(q):
         raise QuestionnaireExpiredException()
 
-    from ...repositories.terms import TermRepository
-    term_repo = TermRepository(db)
+    # Rate limit + repeat de-dup (hash-only client identifier, never raw IP).
+    client_id = throttle.client_id(request)
+    throttle.check(client_id, q.id)
 
-    # Public forms submit display values. Persist term IDs so reports and
-    # standard-term management stay consistent.
-    brew_method_term_id = None
-    if body.brew_method:
-        term = await term_repo.get_or_create_value("brew_method", body.brew_method)
-        brew_method_term_id = term.id
-
-    flavor_term_ids: list[str] = []
-    for flavor_value in body.flavor_notes[:50]:  # hard cap per request schema
-        if not flavor_value or not flavor_value.strip():
-            continue
-        trimmed = flavor_value.strip()[:128]  # enforce DB column length
-        term = await term_repo.get_or_create_value("flavor", trimmed)
-        flavor_term_ids.append(term.id)
+    # Resolve terms read-only — 422 on unknown/inactive, never create.
+    brew_method_term_id = await resolve_brew_method_term(db, body)
+    flavor_term_ids = await resolve_flavor_term_ids(db, body)
 
     # Calculate bean age
     result = await db.execute(
@@ -85,6 +85,7 @@ async def submit_evaluation(
         aftertaste_score=body.aftertaste_score,
         overall_preference_score=body.overall_preference_score,
         flavor_term_ids=flavor_term_ids,
+        free_flavor_description=body.free_flavor_description,
         free_notes=body.free_notes,
         bean_age_days=bean_age,
         submitted_at=datetime.now(timezone.utc),
@@ -99,6 +100,9 @@ async def submit_evaluation(
         .values(submission_count=Questionnaire.submission_count + 1)
     )
     await db.flush()
+
+    # Stamp the successful submission so an immediate re-submit is de-duplicated.
+    throttle.record_repeat(client_id, q.id)
 
     return {
         "id": eval_.id,
@@ -203,6 +207,7 @@ async def get_evaluations_for_questionnaire(
                     term_names.get(term_id, term_id[:8])
                     for term_id in (e.flavor_term_ids or [])
                 ],
+                free_flavor_description=e.free_flavor_description,
                 free_notes=e.free_notes,
                 bean_age_days=e.bean_age_days,
                 submitted_at=e.submitted_at.isoformat() if e.submitted_at else None,

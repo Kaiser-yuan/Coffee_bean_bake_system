@@ -8,6 +8,8 @@ export function toPurchaseBatchCreateDto(form: {
   moistureContent?: number
   supplier?: string
   lotNumber?: string
+  inventoryTrackingMode?: string
+  openingStockGrams?: number
 }): PurchaseBatchCreateRequestDto {
   return {
     purchase_date: form.purchaseDate,
@@ -16,5 +18,7 @@ export function toPurchaseBatchCreateDto(form: {
     moisture_content_percent: form.moistureContent ?? undefined,
     supplier: form.supplier || undefined,
     lot_number: form.lotNumber || undefined,
+    inventory_tracking_mode: form.inventoryTrackingMode as 'normal' | 'historical_archive' | undefined,
+    opening_stock_grams: form.openingStockGrams ?? undefined,
   }
 }

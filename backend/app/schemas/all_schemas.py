@@ -3,7 +3,8 @@ Pydantic schemas for request/response validation.
 Field naming: snake_case, matching DB and REST API.
 """
 from datetime import datetime
-from pydantic import BaseModel, Field
+from typing import Annotated, Literal
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 
 # ============================================================
@@ -112,8 +113,14 @@ class GreenBeanWithFirstPurchaseRequest(BaseModel):
     supplier: str | None = None
     lot_number: str | None = None
     notes: str | None = None
-    inventory_tracking_mode: str | None = "normal"
-    opening_stock_grams: int | None = None
+    inventory_tracking_mode: Literal["normal", "historical_archive"] = "normal"
+    opening_stock_grams: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_opening_stock_le_total(self):
+        if self.opening_stock_grams is not None and self.opening_stock_grams > self.total_weight_grams:
+            raise ValueError("期初库存不能超过原采购总重量")
+        return self
 
 
 class PurchaseBatchCreateRequest(BaseModel):
@@ -124,8 +131,14 @@ class PurchaseBatchCreateRequest(BaseModel):
     supplier: str | None = None
     lot_number: str | None = None
     notes: str | None = None
-    inventory_tracking_mode: str | None = "normal"
-    opening_stock_grams: int | None = None
+    inventory_tracking_mode: Literal["normal", "historical_archive"] = "normal"
+    opening_stock_grams: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_opening_stock_le_total(self):
+        if self.opening_stock_grams is not None and self.opening_stock_grams > self.total_weight_grams:
+            raise ValueError("期初库存不能超过原采购总重量")
+        return self
 
 
 # ============================================================
@@ -136,6 +149,8 @@ class PurchaseBatchResponse(BaseModel):
     green_bean_id: str
     purchase_date: str | None = None
     total_weight_grams: int
+    inventory_tracking_mode: str | None = None
+    opening_stock_grams: int | None = None
     moisture_content_percent: float | None = None
     unit_price_fen_per_kg: int | None = None
     total_price_fen: int | None = None
@@ -389,12 +404,24 @@ class PublicQuestionnaireResponse(BaseModel):
 # ============================================================
 # Evaluations
 # ============================================================
+# Controlled vocabularies for the public evaluation form. drink_temperature /
+# drink_form / evaluator_type are Literal enums (matching the values the
+# frontend sends) — they are NOT free text and never create standard terms.
+# brew_method and flavor_notes are *standard-term backed*: the public endpoint
+# only accepts active terms and returns 422 for unknown values (it never
+# creates terms). Free-text flavor descriptions go to free_flavor_description.
+FlavorNoteStr = Annotated[str, StringConstraints(max_length=128, strip_whitespace=False)]
+
+
 class EvaluationSubmitRequest(BaseModel):
     evaluator_name: str | None = Field(default=None, max_length=64)
-    evaluator_type: str | None = Field(default=None, max_length=16)
+    evaluator_type: Literal["roaster", "colleague", "customer"] | None = None
     brew_method: str | None = Field(default=None, max_length=128)
-    drink_temperature: str | None = Field(default=None, max_length=8)
-    drink_form: str | None = Field(default=None, max_length=16)
+    # Preferred: submit term IDs directly. When provided, these take
+    # precedence over the display-value fields below and are validated active.
+    brew_method_term_id: str | None = None
+    drink_temperature: Literal["热饮", "冷饮"] | None = None
+    drink_form: Literal["黑咖啡", "加奶", "其他"] | None = None
     dry_fragrance_score: int | None = Field(default=None, ge=1, le=5)
     wet_aroma_score: int | None = Field(default=None, ge=1, le=5)
     acidity_intensity_score: int | None = Field(default=None, ge=1, le=5)
@@ -402,7 +429,9 @@ class EvaluationSubmitRequest(BaseModel):
     bitterness_intensity_score: int | None = Field(default=None, ge=1, le=5)
     aftertaste_score: int | None = Field(default=None, ge=1, le=5)
     overall_preference_score: int = Field(ge=1, le=5)
-    flavor_notes: list[str] = Field(default_factory=list, max_length=50)
+    flavor_notes: list[FlavorNoteStr] = Field(default_factory=list, max_length=50)
+    flavor_term_ids: list[str] = Field(default_factory=list, max_length=50)
+    free_flavor_description: str | None = Field(default=None, max_length=2000)
     free_notes: str | None = Field(default=None, max_length=2000)
 
 
@@ -433,6 +462,7 @@ class EvaluationResponse(BaseModel):
     aftertaste_score: int | None = None
     overall_preference_score: int | None = None
     flavor_notes: list[str] = Field(default_factory=list)
+    free_flavor_description: str | None = None
     free_notes: str | None = None
     bean_age_days: int | None = None
     submitted_at: str | None = None
@@ -539,6 +569,9 @@ class BulkImportPreviewItem(BaseModel):
     file_size_bytes: int
     inferred_roasted_at: str | None = None
     roasted_at_source: str | None = None
+    roasted_date_source: str | None = None
+    roasted_time_source: str | None = None
+    pot_order: int | None = None
     input_weight_grams: int | None = None
     output_weight_grams: int | None = None
     inventory_effective: bool

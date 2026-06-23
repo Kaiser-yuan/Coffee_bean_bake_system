@@ -10,10 +10,59 @@
     </div>
 
     <template v-else>
+      <!-- Step 0: 新建历史归档采购 -->
+      <section class="card" :class="{ 'card-collapsed': !showNewArchive }">
+        <h2 class="card-title" style="cursor: pointer" @click="showNewArchive = !showNewArchive">
+          {{ showNewArchive ? '▾' : '▸' }} 新建历史归档采购
+        </h2>
+        <p class="card-hint">选择已有生豆并输入原采购重量、期初库存等信息，创建一个仅归档的采购批次。</p>
+        <template v-if="showNewArchive">
+          <div class="archive-form">
+            <div class="form-row">
+              <label class="field flex-1">
+                <span>生豆</span>
+                <select v-model="archiveForm.greenBeanId" class="input">
+                  <option value="">— 请选择 —</option>
+                  <option v-for="gb in greenBeanOptions" :key="gb.id" :value="gb.id">{{ gb.label }}</option>
+                </select>
+              </label>
+              <label class="field" style="max-width: 180px">
+                <span>采购日期</span>
+                <input v-model="archiveForm.purchaseDate" type="date" class="input" />
+              </label>
+            </div>
+            <div class="form-row">
+              <label class="field" style="max-width: 180px">
+                <span>原采购重量 (g)</span>
+                <input v-model.number="archiveForm.totalWeight" type="number" min="1" class="input" />
+              </label>
+              <label class="field" style="max-width: 180px">
+                <span>期初库存 (g) <em class="hint">默认 0</em></span>
+                <input v-model.number="archiveForm.openingStock" type="number" min="0" class="input" placeholder="0" />
+              </label>
+              <label class="field" style="max-width: 200px">
+                <span>供应商</span>
+                <input v-model="archiveForm.supplier" type="text" class="input" placeholder="可选" />
+              </label>
+            </div>
+            <div class="form-actions">
+              <button
+                class="btn btn-secondary"
+                :disabled="!canCreateArchive || creatingArchive"
+                @click="doCreateArchivePurchase"
+              >
+                {{ creatingArchive ? '创建中…' : '创建归档采购' }}
+              </button>
+              <p v-if="archiveError" class="error-text">{{ archiveError }}</p>
+            </div>
+          </div>
+        </template>
+      </section>
+
       <!-- Step 1: 选择采购批次 -->
       <section class="card">
         <h2 class="card-title">1. 选择采购批次</h2>
-        <p class="card-hint">先在「生豆管理」中补建历史生豆与采购批次，再回到此处选择。</p>
+        <p class="card-hint">先在「生豆管理」中补建历史生豆与采购批次，或在上方直接创建历史归档采购。</p>
         <label class="field">
           <span>采购批次</span>
           <select v-model="purchaseBatchId" class="input" @change="onPickBatch">
@@ -143,7 +192,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onBeforeUnmount, ref, reactive } from 'vue'
 import { isDemoMode, ApiError } from '../api/http'
 import * as greenBeanApi from '../api/greenBeans'
 import { toGreenBeanTree } from '../adapters/greenBean'
@@ -151,16 +200,35 @@ import {
   previewHistoricalRoastCsvBackfill,
   commitHistoricalRoastCsvBackfill,
 } from '../api/backfills'
+import { cancelBulkImportJob } from '../api/bulkImports'
 import type {
   BulkImportPreviewResponseDto,
   BulkImportCommitResponseDto,
   TimeInferenceStrategy,
 } from '../api/bulkImports'
 import { invalidateRoastContext } from '../services/greenBeanContextService'
+import { addPurchaseBatch as apiAddPurchaseBatch } from '../services/greenBeanService'
 
 const loading = ref(false)
 const errorText = ref('')
 const dragging = ref(false)
+const showNewArchive = ref(false)
+
+// -- Archive purchase creation form --
+const archiveForm = reactive({
+  greenBeanId: '',
+  purchaseDate: new Date().toISOString().split('T')[0],
+  totalWeight: 5000,
+  openingStock: 0 as number | undefined,
+  supplier: '',
+})
+const creatingArchive = ref(false)
+const archiveError = ref('')
+const greenBeanOptions = ref<{ id: string; label: string }[]>([])
+
+const canCreateArchive = computed(
+  () => archiveForm.greenBeanId && archiveForm.totalWeight > 0 && !creatingArchive.value,
+)
 
 const purchaseBatchId = ref('')
 const purchaseBatchOptions = ref<{ id: string; label: string; remaining: number }[]>([])
@@ -190,16 +258,36 @@ const editableRows = ref<EditableRow[]>([])
 
 onMounted(loadPurchaseBatches)
 
+onBeforeUnmount(() => {
+  // Best-effort cancel the current previewed job when leaving the page.
+  if (preview.value?.job_id) {
+    cancelBulkImportJob(preview.value.job_id).catch(() => {})
+  }
+})
+
 async function loadPurchaseBatches() {
   if (isDemoMode) return
   try {
     const tree = await greenBeanApi.getGreenBeanTree({})
     const { greenBeans, purchaseBatches } = toGreenBeanTree(tree)
     const beanNameById = new Map(greenBeans.map((g) => [g.id, g.name]))
-    purchaseBatchOptions.value = purchaseBatches.map((p) => ({
-      id: p.id,
-      label: `${beanNameById.get(p.greenBeanId) ?? '生豆'} · ${p.id.replace('pb_', 'PB-')}`,
-      remaining: p.remainingStock ?? 0,
+    purchaseBatchOptions.value = purchaseBatches.map((p) => {
+      const beanName = beanNameById.get(p.greenBeanId) ?? '生豆'
+      const parts: string[] = []
+      if (p.inventoryTrackingMode === 'historical_archive') parts.push('历史归档')
+      parts.push(beanName)
+      parts.push(`原采购 ${p.totalWeight}g`)
+      if (p.openingStockGrams !== undefined) parts.push(`期初 ${p.openingStockGrams}g`)
+      parts.push(`剩余 ${p.remainingStock}g`)
+      return {
+        id: p.id,
+        label: parts.join(' · '),
+        remaining: p.remainingStock ?? 0,
+      }
+    })
+    greenBeanOptions.value = greenBeans.map((g) => ({
+      id: g.id,
+      label: `${g.name}${g.variety ? ' · ' + g.variety : ''}`,
     }))
   } catch (e) {
     errorText.value = e instanceof ApiError ? e.message : '加载采购批次失败'
@@ -209,6 +297,32 @@ async function loadPurchaseBatches() {
 function onPickBatch() {
   preview.value = null
   commitResult.value = null
+}
+
+async function doCreateArchivePurchase() {
+  if (!canCreateArchive.value) return
+  creatingArchive.value = true
+  archiveError.value = ''
+  try {
+    await apiAddPurchaseBatch(archiveForm.greenBeanId, {
+      name: '',
+      variety: '',
+      process: '',
+      region: '',
+      purchaseDate: archiveForm.purchaseDate,
+      totalWeight: archiveForm.totalWeight,
+      supplier: archiveForm.supplier || undefined,
+      inventoryTrackingMode: 'historical_archive',
+      openingStockGrams: archiveForm.openingStock ?? 0,
+    })
+    // Refresh the purchase batch list so the new archive batch appears
+    await loadPurchaseBatches()
+    archiveError.value = ''
+  } catch (e) {
+    archiveError.value = e instanceof ApiError ? e.message : '创建归档采购失败'
+  } finally {
+    creatingArchive.value = false
+  }
 }
 
 function onFileInput(e: Event) {
@@ -234,6 +348,10 @@ async function doPreview() {
   if (!purchaseBatchId.value || !files.value.length) return
   loading.value = true
   try {
+    // Cancel previous previewed job before creating a new one.
+    if (preview.value?.job_id) {
+      cancelBulkImportJob(preview.value.job_id).catch(() => {})
+    }
     const res = await previewHistoricalRoastCsvBackfill(
       {
         purchase_batch_id: purchaseBatchId.value,

@@ -15,9 +15,9 @@ from ...schemas.all_schemas import (
     BulkImportCommitItem, BulkImportCommitResponse, BulkImportPreviewResponse,
 )
 from ...services.bulk_import import (
-    preview_roast_csv_import, commit_roast_csv_import, UploadedCsv,
-    parse_client_last_modified,
+    preview_roast_csv_import, commit_roast_csv_import,
 )
+from ..upload_helpers import read_uploads_with_limits
 
 router = APIRouter(tags=["bulk-imports"])
 
@@ -46,45 +46,9 @@ async def bulk_preview(
     if time_inference_strategy and time_inference_strategy not in _ALLOWED_STRATEGIES:
         raise ValidationException(f"不支持的时间推断策略: {time_inference_strategy}")
 
-    # -- Upload limits from settings --
-    from ...core.config import settings
-    if len(files) > settings.bulk_upload_max_files:
-        raise ValidationException(
-            f"单次最多上传 {settings.bulk_upload_max_files} 个文件，本次收到 {len(files)} 个"
-        )
-    total_bytes = 0
-    for f in files:
-        # Peek size before reading fully — FastAPI UploadFile doesn't expose
-        # size natively, so we read and track.
-        content = await f.read()
-        total_bytes += len(content)
-        if len(content) > settings.upload_max_size_bytes:
-            raise ValidationException(
-                f"文件 {f.filename} 超过 {settings.upload_max_size_bytes // 1024 // 1024}MB 限制"
-            )
-    if total_bytes > settings.bulk_upload_max_total_bytes:
-        raise ValidationException(
-            f"上传总大小 {total_bytes / 1024 / 1024:.1f}MB "
-            f"超过 {settings.bulk_upload_max_total_bytes // 1024 // 1024}MB 限制"
-        )
-    # Re-seek for downstream — we've already consumed the stream.
-    # Since FastAPI's UploadFile is SpooledTemporaryFile under the hood,
-    # re-seek to start so the service layer can re-read.
-    for f in files:
-        await f.seek(0)
-
-    uploaded: list[UploadedCsv] = []
-    for index, f in enumerate(files):
-        content = await f.read()
-        if len(content) > 20 * 1024 * 1024:
-            raise ValidationException(f"文件 {f.filename} 超过 20MB 限制")
-        uploaded.append(UploadedCsv(
-            filename=f.filename or "unknown.csv",
-            content=content,
-            client_last_modified=parse_client_last_modified(
-                client_last_modified[index] if index < len(client_last_modified) else None
-            ),
-        ))
+    uploaded = await read_uploads_with_limits(
+        files, client_last_modified=client_last_modified,
+    )
 
     return await preview_roast_csv_import(
         db=db,
@@ -130,9 +94,17 @@ async def bulk_commit(
         item = BulkImportCommitItem.model_validate(raw)
         submitted.append(item.model_dump(mode="python"))
 
+    # Limit files to a sensible max to avoid resource exhaustion, but fail
+    # *after* the commit guard (job state unchanged on over-limit).
+    from ...core.config import settings
+    if len(files) > settings.bulk_upload_max_files * 2:
+        raise HTTPException(status_code=422, detail="文件数量超过限制")
+
     file_bytes_by_hash: dict[str, bytes] = {}
     for f in files:
         content = await f.read()
+        if len(content) > settings.upload_max_size_bytes:
+            raise HTTPException(status_code=422, detail=f"文件 {f.filename} 超过限制")
         from ...parsers.kaleido_m1 import parse_kaleido_m1
         try:
             parsed = parse_kaleido_m1(content, f.filename or "unknown.csv")

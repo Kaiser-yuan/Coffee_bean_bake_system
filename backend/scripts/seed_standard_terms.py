@@ -29,12 +29,18 @@ SEED_DATA = {
         "柠檬", "橙子", "葡萄柚", "百香果", "芒果", "桃子", "杏子", "椰子",
         "杏仁", "核桃", "榛子", "黑巧克力", "牛奶巧克力", "太妃糖",
         "茉莉花", "玫瑰花", "薰衣草", "伯爵茶", "绿茶",
+        # public-evaluation form chips (must exist & be active to resolve)
+        "酒香", "烟熏", "茶感", "热带水果",
     ],
     "roast_level": [
         "极浅烘焙", "浅烘焙", "中浅烘焙", "中度烘焙",
         "中深烘焙", "深度烘焙", "极深烘焙",
     ],
-    "brew_method": ["手冲", "法压壶", "爱乐压", "虹吸壶", "摩卡壶", "意式浓缩", "冷萃", "冰滴"],
+    "brew_method": [
+        # public-evaluation form chips first (must exist & be active to resolve)
+        "杯测", "手冲", "意式", "奶咖", "其他",
+        "法压壶", "爱乐压", "虹吸壶", "摩卡壶", "意式浓缩", "冷萃", "冰滴",
+    ],
     "drink_temperature": ["热", "冷"],
     "drink_form": ["黑咖啡", "加奶", "其他"],
     "evaluator_type": ["烘焙师", "同事", "顾客"],

@@ -202,6 +202,7 @@ import { ApiError } from '../../api/http'
 import {
   previewPurchaseBatchCsvImport,
   commitPurchaseBatchCsvImport,
+  cancelBulkImportJob,
   type BulkImportPreviewResponseDto,
   type BulkImportCommitResponseDto,
   type TimeInferenceStrategy,
@@ -258,6 +259,10 @@ function reset() {
 }
 
 function close() {
+  // Best-effort cancel for the current previewed job.
+  if (preview.value?.job_id && step.value === 'preview') {
+    cancelBulkImportJob(preview.value.job_id).catch(() => {})
+  }
   emit('close')
 }
 

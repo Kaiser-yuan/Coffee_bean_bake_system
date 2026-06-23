@@ -79,6 +79,8 @@ export interface PurchaseBatch {
   greenBeanId: string
   purchaseDate: string
   totalWeight: number // g
+  inventoryTrackingMode?: string
+  openingStockGrams?: number
   moistureContent?: number // percentage
   /** 采购单价 (元/kg) */
   pricePerKg?: number
@@ -247,6 +249,8 @@ export interface CuppingEvaluation {
   /** 综合喜好必须评分 */
   overallPreference: number // 1-5, always required
   flavorNotes: string[]
+  /** Free-text flavor description — stored separately, never becomes a standard term. */
+  freeFlavorDescription?: string
   freeNotes?: string
   /** 养豆天数，由系统根据评价时间和烘焙时间自动计算 */
   beanAgeDays?: number

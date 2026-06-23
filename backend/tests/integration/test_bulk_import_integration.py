@@ -17,6 +17,8 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine, async_sessionmaker, AsyncSession,
 )
 
+import asyncio
+
 DB_URL = "postgresql+asyncpg://coffee:coffee123@localhost:5432/coffee_roast"
 
 
@@ -550,15 +552,156 @@ class TestPublicEvaluation:
         await db.refresh(q)
         assert q.submission_count >= 0  # might need explicit update in real code
 
-    async def test_concurrent_term_creation_handled(self, db):
-        """get_or_create_value should handle concurrent inserts gracefully."""
+    async def test_concurrent_term_creation_handled(self):
+        """Two independent AsyncSession creating the same admin term concurrently
+        must keep exactly one row and never 500 (real ON CONFLICT upsert)."""
         from app.repositories.terms import TermRepository
-        term_repo = TermRepository(db)
+        from app.models.all_models import StandardTerm
+        engine = create_async_engine(DB_URL, echo=False)
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        value = "test_concurrent_two_session_xyz"
 
-        # Insert once
-        term1 = await term_repo.get_or_create_value("flavor", "test_concurrent")
-        assert term1 is not None
+        async def make():
+            async with sm() as s:
+                term = await TermRepository(s).get_or_create_value("flavor", value)
+                await s.commit()
+                return term
 
-        # Simulate concurrent: another request creates the same value
-        term2 = await term_repo.get_or_create_value("flavor", "test_concurrent")
-        assert term2.id == term1.id  # should resolve to the same term
+        t1, t2 = await asyncio.gather(make(), make())
+        assert t1 is not None and t2 is not None
+        assert t1.id == t2.id  # resolved to the same row, no 500
+
+        async with sm() as s:
+            count = (
+                await s.execute(
+                    select(func.count())
+                    .select_from(StandardTerm)
+                    .where(
+                        StandardTerm.category == "flavor",
+                        StandardTerm.value == value,
+                    )
+                )
+            ).scalar_one()
+            assert count == 1
+        await engine.dispose()
+
+
+class TestPublicEvaluationTerms:
+    """P1-2: public evaluations only reference active standard terms — never
+    create them. Unknown/inactive values return 422."""
+
+    async def test_unknown_flavor_returns_422_and_creates_no_term(self, db):
+        from app.services.public_evaluation import resolve_flavor_term_ids
+        from app.schemas.all_schemas import EvaluationSubmitRequest
+        from app.core.exceptions import ValidationException
+        from app.models.all_models import StandardTerm
+
+        body = EvaluationSubmitRequest(
+            overall_preference_score=5, flavor_notes=["完全不存在的风味词ZZZ"],
+        )
+        before = (
+            await db.execute(
+                select(func.count())
+                .select_from(StandardTerm)
+                .where(StandardTerm.category == "flavor")
+            )
+        ).scalar_one()
+        with pytest.raises(ValidationException):
+            await resolve_flavor_term_ids(db, body)
+        after = (
+            await db.execute(
+                select(func.count())
+                .select_from(StandardTerm)
+                .where(StandardTerm.category == "flavor")
+            )
+        ).scalar_one()
+        assert after == before  # no term created
+
+    async def test_inactive_flavor_returns_422(self, db):
+        from app.repositories.terms import TermRepository
+        from app.services.public_evaluation import resolve_flavor_term_ids
+        from app.schemas.all_schemas import EvaluationSubmitRequest
+        from app.core.exceptions import ValidationException
+
+        repo = TermRepository(db)
+        term = await repo.get_or_create_value("flavor", "test_inactive_flavor_xyz")
+        term.is_active = False
+        await db.flush()
+        body = EvaluationSubmitRequest(
+            overall_preference_score=5, flavor_notes=["test_inactive_flavor_xyz"],
+        )
+        with pytest.raises(ValidationException):
+            await resolve_flavor_term_ids(db, body)
+
+    async def test_known_active_flavor_resolves(self, db):
+        from app.services.public_evaluation import resolve_flavor_term_ids
+        from app.schemas.all_schemas import EvaluationSubmitRequest
+
+        body = EvaluationSubmitRequest(
+            overall_preference_score=5, flavor_notes=["花香"],
+        )
+        ids = await resolve_flavor_term_ids(db, body)
+        assert len(ids) == 1
+
+    async def test_free_flavor_description_saved_without_term(self, db, purchase_batch_id):
+        from app.models.all_models import (
+            RoastingBatch, Questionnaire, CuppingEvaluation, StandardTerm,
+        )
+        from datetime import datetime, timezone
+
+        free_text = "独特的茉莉与热带水果交织，不属于任何标准词"
+        batch = RoastingBatch(
+            purchase_batch_id=purchase_batch_id,
+            status="completed",
+            roasted_at=datetime(2026, 6, 21, 9, 30, tzinfo=timezone.utc),
+            planned_input_weight_grams=500,
+            actual_input_weight_grams=500,
+            inventory_effective=True,
+            entry_mode="csv_bulk_import",
+            planned_at=datetime(2026, 6, 21, 9, 0, tzinfo=timezone.utc),
+        )
+        db.add(batch)
+        await db.flush()
+        import secrets
+        q = Questionnaire(
+            roasting_batch_id=batch.id,
+            status="open",
+            share_code=secrets.token_urlsafe(12),
+        )
+        db.add(q)
+        await db.flush()
+
+        before = (
+            await db.execute(
+                select(func.count())
+                .select_from(StandardTerm)
+                .where(StandardTerm.value == free_text)
+            )
+        ).scalar_one()
+        assert before == 0
+
+        eval_ = CuppingEvaluation(
+            questionnaire_id=q.id,
+            roasting_batch_id=batch.id,
+            evaluator_name="测试员",
+            evaluator_type="customer",
+            drink_temperature="热饮",
+            drink_form="黑咖啡",
+            overall_preference_score=4,
+            flavor_term_ids=[],
+            free_flavor_description=free_text,
+            free_notes="备注",
+        )
+        db.add(eval_)
+        await db.flush()
+        await db.refresh(eval_)
+        assert eval_.free_flavor_description == free_text
+
+        after = (
+            await db.execute(
+                select(func.count())
+                .select_from(StandardTerm)
+                .where(StandardTerm.value == free_text)
+            )
+        ).scalar_one()
+        assert after == 0  # free text never created a standard term

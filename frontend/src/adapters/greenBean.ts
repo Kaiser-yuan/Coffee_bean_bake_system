@@ -51,6 +51,8 @@ export function toGreenBeanWithFirstPurchaseDto(form: {
   moistureContent?: number
   supplier?: string
   lotNumber?: string
+  inventoryTrackingMode?: string
+  openingStockGrams?: number
 }): {
   name: string
   variety?: string | null
@@ -68,6 +70,8 @@ export function toGreenBeanWithFirstPurchaseDto(form: {
   moisture_content_percent?: number | null
   supplier?: string | null
   lot_number?: string | null
+  inventory_tracking_mode?: 'normal' | 'historical_archive' | null
+  opening_stock_grams?: number | null
 } {
   return {
     name: form.name,
@@ -86,6 +90,8 @@ export function toGreenBeanWithFirstPurchaseDto(form: {
     moisture_content_percent: form.moistureContent ?? undefined,
     supplier: form.supplier || undefined,
     lot_number: form.lotNumber || undefined,
+    inventory_tracking_mode: form.inventoryTrackingMode as 'normal' | 'historical_archive' | undefined,
+    opening_stock_grams: form.openingStockGrams ?? undefined,
   }
 }
 
@@ -108,6 +114,8 @@ export function toGreenBeanTree(tree: GreenBeanTreeDto[]): {
         greenBeanId: pbDto.green_bean_id,
         purchaseDate: pbDto.purchase_date || '',
         totalWeight: pbDto.total_weight_grams,
+        inventoryTrackingMode: pbDto.inventory_tracking_mode ?? undefined,
+        openingStockGrams: pbDto.opening_stock_grams ?? undefined,
         moistureContent: pbDto.moisture_content_percent ?? undefined,
         pricePerKg: pbDto.unit_price_fen_per_kg !== null && pbDto.unit_price_fen_per_kg !== undefined
           ? pbDto.unit_price_fen_per_kg / 100
@@ -128,7 +136,7 @@ export function toGreenBeanTree(tree: GreenBeanTreeDto[]): {
           purchaseBatchId: rbDto.purchase_batch_id,
           plannedDate: rbDto.planned_at || undefined,
           actualDate: rbDto.roasted_at || undefined,
-          beanWeightIn: rbDto.planned_input_weight_grams,
+          beanWeightIn: rbDto.actual_input_weight_grams ?? rbDto.planned_input_weight_grams,  // P1-4: actual first
           beanWeightOut: rbDto.output_weight_grams ?? undefined,
           weightLossRate: rbDto.weight_loss_percent ?? undefined,
           totalTime: rbDto.total_time_seconds ?? undefined,
@@ -140,6 +148,9 @@ export function toGreenBeanTree(tree: GreenBeanTreeDto[]): {
           evaluationStatus: 'none' as import('../types').EvaluationStatus,
           reviewStatus: 'none' as import('../types').ReviewStatus,
           colorTag: rbDto.color_tag || undefined,
+          entryMode: rbDto.entry_mode || undefined,
+          inventoryEffective: rbDto.inventory_effective ?? undefined,
+          sourceNote: rbDto.source_note || undefined,
         })
       }
     }

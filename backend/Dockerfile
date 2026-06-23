@@ -13,4 +13,6 @@ RUN mkdir -p data/uploads
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Production entrypoint — migrate then serve. If migration fails the container
+# must exit (set -e). Uvicorn takes over only after a successful upgrade.
+CMD ["sh", "-c", "set -e && alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]

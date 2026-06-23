@@ -21,39 +21,44 @@ class TermRepository(BaseRepository[StandardTerm]):
         return list(result.scalars().all())
 
     async def get_by_category_and_value(
-        self, category: str, value: str
+        self, category: str, value: str, active_only: bool = False
     ) -> StandardTerm | None:
-        result = await self.db.execute(
-            select(StandardTerm).where(
-                StandardTerm.category == category,
-                StandardTerm.value == value
-            )
+        stmt = select(StandardTerm).where(
+            StandardTerm.category == category,
+            StandardTerm.value == value,
         )
+        if active_only:
+            stmt = stmt.where(StandardTerm.is_active == True)
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_active_for_forms(self, category: str) -> list[StandardTerm]:
         return await self.get_by_category(category=category, active_only=True)
 
     async def get_or_create_value(self, category: str, value: str) -> StandardTerm:
-        """Find existing term or create a new active one.
+        """Find an existing term or insert a new active one — admin only.
 
-        Uses PostgreSQL ON CONFLICT to protect against concurrent inserts
-        that could violate the unique constraint, avoiding 500 errors under
-        parallel submission.
+        Uses PostgreSQL ``INSERT ... ON CONFLICT DO NOTHING`` so concurrent
+        admin inserts of the same (category, value) never raise a unique-
+        violation 500. On conflict the caller simply re-queries — the shared
+        session is never rolled back (which would abort the whole request
+        transaction).
         """
         from sqlalchemy.dialects.postgresql import insert as pg_insert
+
         existing = await self.get_by_category_and_value(category, value)
         if existing:
             return existing
-        try:
-            term = StandardTerm(category=category, value=value)
-            self.db.add(term)
-            await self.db.flush()
+
+        stmt = (
+            pg_insert(StandardTerm)
+            .values(category=category, value=value, is_active=True)
+            .on_conflict_do_nothing(index_elements=["category", "value"])
+            .returning(StandardTerm)
+        )
+        result = await self.db.execute(stmt)
+        term = result.scalar_one_or_none()
+        if term is not None:
             return term
-        except Exception:
-            await self.db.rollback()
-            # Another request won the race — re-query
-            retry = await self.get_by_category_and_value(category, value)
-            if retry:
-                return retry
-            raise
+        # Lost the race — another request inserted and committed it.
+        return await self.get_by_category_and_value(category, value)

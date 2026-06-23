@@ -31,6 +31,7 @@ function toEvaluation(dto: EvaluationResponseDto): CuppingEvaluation {
     aftertaste: dto.aftertaste_score ?? 0,
     overallPreference: dto.overall_preference_score ?? 0,
     flavorNotes: dto.flavor_notes,
+    freeFlavorDescription: dto.free_flavor_description || undefined,
     freeNotes: dto.free_notes || undefined,
     beanAgeDays: dto.bean_age_days ?? undefined,
     submittedAt: dto.submitted_at || '',
@@ -69,6 +70,7 @@ export async function submitEvaluation(
     aftertaste_score: optionalScore(data.aftertaste),
     overall_preference_score: data.overallPreference || 1,
     flavor_notes: data.flavorNotes || [],
+    free_flavor_description: data.freeFlavorDescription || undefined,
     free_notes: data.freeNotes || undefined,
   }
   const result = await evaluationApi.submitEvaluation(shareCode, body)

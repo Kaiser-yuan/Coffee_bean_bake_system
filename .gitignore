@@ -15,3 +15,7 @@ __pycache__/
 
 # Backend
 backend/data/uploads/
+backend/.env.production
+
+# Claude local permissions — must not be distributed
+.claude/settings.local.json

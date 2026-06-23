@@ -19,6 +19,8 @@ export type GreenBeanPurchaseForm = {
   moistureContent?: number
   supplier?: string
   lotNumber?: string
+  inventoryTrackingMode?: string
+  openingStockGrams?: number
 }
 
 export async function createGreenBeanWithFirstPurchase(form: GreenBeanPurchaseForm) {

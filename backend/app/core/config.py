@@ -2,6 +2,7 @@
 from pathlib import Path
 from typing import Literal
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -44,6 +45,11 @@ class Settings(BaseSettings):
     bulk_upload_max_files: int = 20
     bulk_upload_max_total_bytes: int = 104_857_600  # 100 MB
 
+    # Spacing between consecutive pots when assigning roast times by upload/pot
+    # order (minutes). No CookDate, same-day filenames get first-pot time +
+    # (pot_order - 1) * this spacing.
+    roast_spacing_minutes: int = 45
+
     # Bulk job expiry (seconds)
     bulk_job_expiry_seconds: int = 86400  # 24 hours
 
@@ -53,6 +59,20 @@ class Settings(BaseSettings):
 
     # Public frontend URL for share links
     public_frontend_base_url: str = "http://localhost:5173"
+
+    @model_validator(mode="after")
+    def _validate_production_settings(self):
+        if self.app_env != "production":
+            return self
+        if self.secret_key in ("change-me", "dev-secret-key-change-before-production"):
+            raise ValueError("生产环境必须设置一个安全的 SECRET_KEY")
+        if self.jwt_secret_key in ("change-me-jwt-secret", "dev-jwt-secret-change-before-production"):
+            raise ValueError("生产环境必须设置一个安全的 JWT_SECRET_KEY")
+        if self.database_url and "coffee123" in self.database_url:
+            raise ValueError("生产环境必须设置一个安全的数据库密码")
+        if any("localhost" in o for o in self.cors_origins):
+            raise ValueError("生产环境不能使用 localhost CORS 来源")
+        return self
 
     @property
     def upload_path(self) -> Path:

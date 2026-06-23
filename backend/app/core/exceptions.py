@@ -32,12 +32,23 @@ class NotFoundException(AppException):
 
 
 class ValidationException(AppException):
-    def __init__(self, message: str, details: dict | None = None):
+    def __init__(self, message: str, details: dict | None = None, status_code: int = 400):
         super().__init__(
             code="VALIDATION_ERROR",
             message=message,
             details=details,
-            status_code=400,
+            status_code=status_code,
+        )
+
+
+class RateLimitException(AppException):
+    """Too many requests — raised by the public-evaluation throttle (HTTP 429)."""
+
+    def __init__(self, message: str = "提交过于频繁，请稍后再试"):
+        super().__init__(
+            code="RATE_LIMIT_EXCEEDED",
+            message=message,
+            status_code=429,
         )
 
 
