@@ -19,23 +19,26 @@ async def lifespan(app: FastAPI):
     async def _expire_loop():
         from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
         engine = create_async_engine(settings.database_url, echo=False)
-        while True:
-            try:
-                async with AsyncSession(engine) as db:
-                    from .services.bulk_import import expire_stale_bulk_jobs
-                    expired = await expire_stale_bulk_jobs(db)
-                    if expired:
-                        import logging
-                        logging.getLogger("coffee-roast.bulk_import").info(
-                            "Background: expired %d stale previewed jobs", expired
-                        )
-                    await db.commit()
-            except Exception:
-                import logging
-                logging.getLogger("coffee-roast.bulk_import").warning(
-                    "Background expiry task failed, will retry", exc_info=True
-                )
-            await asyncio.sleep(1200)  # every 20 minutes
+        try:
+            while True:
+                try:
+                    async with AsyncSession(engine) as db:
+                        from .services.bulk_import import expire_stale_bulk_jobs
+                        expired = await expire_stale_bulk_jobs(db)
+                        if expired:
+                            import logging
+                            logging.getLogger("coffee-roast.bulk_import").info(
+                                "Background: expired %d stale previewed jobs", expired
+                            )
+                        await db.commit()
+                except Exception:
+                    import logging
+                    logging.getLogger("coffee-roast.bulk_import").warning(
+                        "Background expiry task failed, will retry", exc_info=True
+                    )
+                await asyncio.sleep(1200)  # every 20 minutes
+        finally:
+            await engine.dispose()
 
     task = asyncio.create_task(_expire_loop())
     try:

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta, date, time
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
 from ..core.config import settings
 from ..core.exceptions import (

@@ -118,6 +118,11 @@
                     <td>
                       <span class="expand-spacer-double"></span>
                       烘焙 {{ rb.id.replace('rb_', 'RB-') }}
+                      <span
+                        v-for="tag in batchSourceLabels(rb.entryMode, rb.inventoryEffective)"
+                        :key="tag"
+                        class="batch-source-tag"
+                      >{{ tag }}</span>
                     </td>
                     <td class="num">{{ rb.actualDate || rb.plannedDate }}</td>
                     <td class="num">{{ rb.beanWeightIn }}g / {{ rb.beanWeightOut ?? '-' }}g</td>
@@ -329,6 +334,7 @@ import {
   BATCH_STATUS_LABELS,
 } from '../types'
 import type { GreenBean, PurchaseBatch, BeanProcess } from '../types'
+import { batchSourceLabels } from '../utils/batchLabels'
 import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
 import EmptyState from '../components/common/EmptyState.vue'

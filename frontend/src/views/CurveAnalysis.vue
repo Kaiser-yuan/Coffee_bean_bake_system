@@ -9,9 +9,29 @@
         </h2>
         <span v-if="!isCompare && currentBatch" class="text-sm text-secondary">
           {{ getBeanName(currentBatch.id) }} · {{ currentBatch.actualDate || currentBatch.plannedDate }}
+          <span
+            v-for="tag in batchSourceLabels(currentBatch.entryMode, currentBatch.inventoryEffective)"
+            :key="tag"
+            class="batch-source-tag"
+          >{{ tag }}</span>
         </span>
       </div>
       <div class="header-right">
+        <input
+          ref="curveFileInput"
+          type="file"
+          accept=".csv,text/csv"
+          hidden
+          @change="onCurveFileSelected"
+        />
+        <button
+          v-if="!isCompare && currentBatch"
+          class="btn btn-secondary"
+          :disabled="uploadingCurve"
+          @click="curveFileInput?.click()"
+        >
+          {{ uploadingCurve ? '上传解析中…' : (curves.length ? '重新上传曲线' : '上传曲线 CSV') }}
+        </button>
         <!-- 问卷按钮：只有已完成批次才显示 -->
         <button
           v-if="!isCompare && currentBatch && currentBatch.status === 'completed' && !questionnaireCreated"
@@ -40,8 +60,10 @@
       </div>
     </div>
 
+    <div v-if="uploadError" class="upload-error">{{ uploadError }}</div>
+
     <LoadingState v-if="loading" text="加载曲线数据…" />
-    <ErrorState v-else-if="error" :retry="true" @retry="fetchCurves" />
+    <ErrorState v-else-if="error" title="曲线加载失败" :message="loadError" :retry="true" @retry="fetchCurves" />
 
     <template v-else-if="curves.length">
       <!-- KPI 横向摘要条 -->
@@ -143,17 +165,19 @@
       </section>
     </template>
 
-    <EmptyState v-else icon="📈" title="该批次暂无曲线数据" />
+    <EmptyState v-else icon="📈" title="该批次暂无曲线数据" description="点击右上角“上传曲线 CSV”，支持 Kaleido M1 KLDO V101 文件。" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { fetchCurves as fetchCurvesSvc, fetchCurve } from '../services/curveService'
+import { fetchCurves as fetchCurvesSvc, fetchCurve, uploadCurve } from '../services/curveService'
+import { ApiError } from '../api/http'
 import { createQuestionnaire as createQuestionnaireSvc } from '../services/questionnaireService'
-import { fetchRoastContext, getGreenBeanByBatch, type RoastContext } from '../services/greenBeanContextService'
+import { fetchRoastContext, getGreenBeanByBatch, invalidateRoastContext, type RoastContext } from '../services/greenBeanContextService'
 import type { RoastingCurve } from '../types'
+import { batchSourceLabels } from '../utils/batchLabels'
 import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
 import EmptyState from '../components/common/EmptyState.vue'
@@ -163,6 +187,10 @@ const route = useRoute()
 const router = useRouter()
 const loading = ref(false)
 const error = ref(false)
+const loadError = ref('请确认后端服务和曲线数据状态。')
+const uploadError = ref('')
+const uploadingCurve = ref(false)
+const curveFileInput = ref<HTMLInputElement>()
 const curves = ref<RoastingCurve[]>([])
 const batchVisible = ref<boolean[]>([])
 const compareMode = ref<'batch' | 'channel'>('batch')
@@ -253,6 +281,7 @@ function toggleBatch(index: number) {
 async function fetchCurves() {
   loading.value = true
   error.value = false
+  loadError.value = '请确认后端服务和曲线数据状态。'
   try {
     const allCurves = batchIds.value.length > 1
       ? await fetchCurvesSvc(batchIds.value)
@@ -276,10 +305,36 @@ async function fetchCurves() {
 
     await nextTick()
     renderChart()
-  } catch {
+  } catch (e) {
     error.value = true
+    loadError.value = e instanceof ApiError ? e.message : '曲线加载失败'
   } finally {
     loading.value = false
+  }
+}
+
+async function onCurveFileSelected(event: Event) {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file || !currentBatch.value) return
+
+  uploadError.value = ''
+  if (!file.name.toLowerCase().endsWith('.csv')) {
+    uploadError.value = '请选择 .csv 曲线文件'
+    return
+  }
+
+  uploadingCurve.value = true
+  try {
+    await uploadCurve(currentBatch.value.id, file)
+    invalidateRoastContext()
+    roastContext.value = await fetchRoastContext()
+    await fetchCurves()
+  } catch (e) {
+    uploadError.value = e instanceof ApiError ? e.message : '曲线上传或解析失败'
+  } finally {
+    uploadingCurve.value = false
   }
 }
 
@@ -476,6 +531,16 @@ onMounted(async () => {
 }
 
 .page-heading { font-size: var(--fs-xl); font-weight: 600; }
+
+.upload-error {
+  margin-bottom: var(--sp-3);
+  padding: var(--sp-3);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  background: var(--danger-subtle);
+  color: var(--danger);
+  font-size: var(--fs-sm);
+}
 
 .header-right {
   display: flex;

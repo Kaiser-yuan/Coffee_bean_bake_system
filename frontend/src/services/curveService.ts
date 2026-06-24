@@ -1,7 +1,7 @@
 /**
  * Roasting curve service.
  */
-import { isDemoMode } from '../api/http'
+import { ApiError, isDemoMode } from '../api/http'
 import * as curveApi from '../api/curves'
 import type { RoastingCurve } from '../types'
 import type { CurveEventDto, CurvePointDto } from '../api/types'
@@ -42,7 +42,13 @@ export async function fetchCurve(batchId: string): Promise<RoastingCurve | null>
     const m = await getMock()
     return m.apiGetCurve(batchId)
   }
-  const dto = await curveApi.getCurve(batchId)
+  let dto
+  try {
+    dto = await curveApi.getCurve(batchId)
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null
+    throw error
+  }
   return {
     id: dto.curve_file?.id || `curve_${batchId}`,
     roastingBatchId: batchId,
@@ -50,6 +56,16 @@ export async function fetchCurve(batchId: string): Promise<RoastingCurve | null>
     events: dto.events.map(toEvent),
     parsedAt: '',
     csvFileName: dto.curve_file?.original_filename || '',
+  }
+}
+
+export async function uploadCurve(batchId: string, file: File): Promise<void> {
+  if (isDemoMode) {
+    throw new ApiError('演示模式不能上传曲线，请切换到真实 API 模式', 400)
+  }
+  const result = await curveApi.uploadCurveFile(batchId, file)
+  if (result.parse_status !== 'parsed') {
+    throw new ApiError(result.parse_error_message || '曲线解析失败', 422, 'CURVE_PARSE_FAILED')
   }
 }
 

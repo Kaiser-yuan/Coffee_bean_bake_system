@@ -235,6 +235,17 @@ a:hover {
   color: var(--text-tertiary);
 }
 
+.batch-source-tag {
+  display: inline-block;
+  margin-left: var(--sp-1);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--primary-subtle);
+  color: var(--primary);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
 /* ---------- 淡入过渡 ---------- */
 .fade-enter-active,
 .fade-leave-active {

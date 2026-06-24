@@ -45,18 +45,22 @@ async def read_uploads_with_limits(
     lastmod = client_last_modified or []
 
     for i, f in enumerate(files):
-        content = await f.read()
+        chunks: list[bytes] = []
+        file_bytes = 0
+        while chunk := await f.read(1024 * 1024):
+            file_bytes += len(chunk)
+            total_bytes += len(chunk)
+            if file_bytes > max_single:
+                raise ValidationException(
+                    f"文件 {f.filename} 超过 {max_single // 1024 // 1024} MB 限制"
+                )
+            if total_bytes > max_total:
+                raise ValidationException(
+                    f"上传总大小超过 {max_total // 1024 // 1024} MB 限制"
+                )
+            chunks.append(chunk)
 
-        if len(content) > max_single:
-            raise ValidationException(
-                f"文件 {f.filename} 超过 {max_single // 1024 // 1024} MB 限制"
-            )
-
-        total_bytes += len(content)
-        if total_bytes > max_total:
-            raise ValidationException(
-                f"上传总大小超过 {max_total // 1024 // 1024} MB 限制"
-            )
+        content = b"".join(chunks)
 
         results.append(UploadedCsv(
             filename=f.filename or "unknown.csv",

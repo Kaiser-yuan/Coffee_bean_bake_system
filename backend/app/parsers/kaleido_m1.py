@@ -32,6 +32,32 @@ from dataclasses import dataclass, field
 
 logger = logging.getLogger("coffee-roast.parser")
 
+
+def _decode_kldo_text(content: bytes) -> str:
+    """Decode Kaleido exports produced on different desktop platforms.
+
+    Kaleido files are commonly UTF-8 with BOM, but Windows exports can also
+    be UTF-16 or GB18030. Normalize decoding failures into ``ValueError`` so
+    every upload endpoint returns a useful 422 instead of an internal error.
+    """
+    if not content:
+        raise ValueError("Empty file")
+
+    encodings = ["utf-8-sig"]
+    if content.startswith((b"\xff\xfe", b"\xfe\xff")) or content[:256].count(b"\x00") > 8:
+        encodings.extend(["utf-16", "utf-16-le", "utf-16-be"])
+    encodings.append("gb18030")
+
+    for encoding in encodings:
+        try:
+            text = content.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+        if "\x00" not in text:
+            return text
+
+    raise ValueError("无法识别文件编码；请导出 UTF-8、UTF-16 或 GB18030 编码的 Kaleido CSV")
+
 # ---------------------------------------------------------------------------
 # Event name mapping: Kaleido M1 → internal event type
 # ---------------------------------------------------------------------------
@@ -287,14 +313,22 @@ def parse_data_rows(lines: list[str]) -> list[KaleidoDataPoint]:
 
     for row in reader:
         # Normalize column names (strip whitespace)
-        row = {k.strip(): v.strip() for k, v in row.items()}
+        row = {
+            k.strip(): (v or "").strip()
+            for k, v in row.items()
+            if k is not None
+        }
 
         # Index (capital I)
-        sample_idx = int(row.get("Index", 0))
+        try:
+            sample_idx = int(row.get("Index", 0))
 
-        # Time is in milliseconds — convert to seconds
-        time_ms_raw = row.get("Time", "0")
-        time_sec = float(time_ms_raw) / 1000.0
+            # Time is in milliseconds — convert to seconds
+            time_ms_raw = row.get("Time", "0")
+            time_sec = float(time_ms_raw) / 1000.0
+        except (TypeError, ValueError):
+            logger.warning("Skipping malformed KLDO data row: %s", row)
+            continue
 
         point = KaleidoDataPoint(
             sample_index=sample_idx,
@@ -395,16 +429,27 @@ def parse_kaleido_m1(content: bytes, filename: str) -> KaleidoParsedData:
     # Compute hash
     file_hash = hashlib.sha256(content).hexdigest()
 
-    text = content.decode("utf-8-sig")
+    text = _decode_kldo_text(content)
     lines = text.splitlines()
+
+    # Some desktop exporters prepend blank lines before the format marker.
+    while lines and not lines[0].strip():
+        lines.pop(0)
 
     # Identify format
     if not lines:
         raise ValueError("Empty file")
 
     first_line = lines[0].strip()
-    if first_line != "KLDO data file V101":
-        raise ValueError(f"Unexpected format: '{first_line}'. Expected 'KLDO data file V101'.")
+    version_match = re.fullmatch(r"KLDO data file V(\d+)", first_line)
+    if not version_match:
+        raise ValueError(
+            f"不支持的曲线格式，首行是 '{first_line}'；当前仅支持 Kaleido M1 KLDO V101 CSV"
+        )
+    if version_match.group(1) != "101":
+        raise ValueError(
+            f"不支持 KLDO V{version_match.group(1)}；当前解析器仅支持 KLDO V101"
+        )
 
     # Split into sections
     sections = split_kldo_sections(lines[1:])
@@ -417,6 +462,10 @@ def parse_kaleido_m1(content: bytes, filename: str) -> KaleidoParsedData:
 
     # Parse DATA rows
     points = parse_data_rows(sections["data"])
+    if not sections["data"]:
+        raise ValueError("文件缺少 [{DATA}] 曲线数据段")
+    if not points:
+        raise ValueError("[{DATA}] 中没有可解析的数据行，请确认包含 Index、Time、BT 等列")
 
     data = KaleidoParsedData(
         file_hash=file_hash,

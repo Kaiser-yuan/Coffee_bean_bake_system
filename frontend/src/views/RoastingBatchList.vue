@@ -104,6 +104,11 @@
             <td>
               <span class="color-dot" :style="{ background: b.colorTag }"></span>
               <span class="batch-id-link">{{ b.id.replace('rb_', 'RB-') }}</span>
+              <span
+                v-for="tag in batchSourceLabels(b.entryMode, b.inventoryEffective)"
+                :key="tag"
+                class="batch-source-tag"
+              >{{ tag }}</span>
             </td>
             <td>
               <span class="num">{{ b.actualDate || b.plannedDate }}</span>
@@ -269,6 +274,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useRoastingStore } from '../stores/roasting'
 import type { RoastingBatch, BatchDataCompleteness } from '../types'
+import { batchSourceLabels } from '../utils/batchLabels'
 import {
   BEAN_PROCESSES, VARIETY_OPTIONS, REGION_OPTIONS, ROAST_LEVELS,
   BATCH_STATUS_LABELS,

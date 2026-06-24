@@ -119,8 +119,34 @@ class TestFullParsing:
         assert parsed.total_time_seconds == 10.0  # 10000ms / 1000
 
     def test_wrong_format_raises(self):
-        with pytest.raises(ValueError, match="Unexpected format"):
+        with pytest.raises(ValueError, match="不支持的曲线格式"):
             parse_kaleido_m1(b"Not a valid file", "test.csv")
+
+    def test_utf16_export_is_supported(self):
+        content = SAMPLE_CSV.decode("utf-8").encode("utf-16")
+        parsed = parse_kaleido_m1(content, "utf16.csv")
+        assert parsed.point_count == 11
+
+    def test_gb18030_export_is_supported(self):
+        text = SAMPLE_CSV.decode("utf-8").replace(
+            "10:30", "10:30\n[{Comment}]\n测试曲线", 1
+        )
+        parsed = parse_kaleido_m1(text.encode("gb18030"), "gb18030.csv")
+        assert parsed.point_count == 11
+
+    def test_leading_blank_lines_are_supported(self):
+        parsed = parse_kaleido_m1(b"\r\n\r\n" + SAMPLE_CSV, "blank-prefix.csv")
+        assert parsed.point_count == 11
+
+    def test_unsupported_kldo_version_has_clear_error(self):
+        content = SAMPLE_CSV.replace(b"V101", b"V102", 1)
+        with pytest.raises(ValueError, match="仅支持 KLDO V101"):
+            parse_kaleido_m1(content, "v102.csv")
+
+    def test_missing_data_section_is_rejected(self):
+        content = b"KLDO data file V101\n[{PARAMETERS}]\n[{TotalTime}]\n10:30\n"
+        with pytest.raises(ValueError, match=r"\[\{DATA\}\]"):
+            parse_kaleido_m1(content, "missing-data.csv")
 
 
 class TestStageMetrics:

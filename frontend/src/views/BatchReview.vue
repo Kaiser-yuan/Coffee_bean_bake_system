@@ -5,6 +5,11 @@
       <h2 class="page-heading">批次复盘</h2>
       <span v-if="batch" class="text-sm text-secondary">
         {{ getBeanName }} · {{ batch.actualDate || batch.plannedDate }}
+        <span
+          v-for="tag in batchSourceLabels(batch.entryMode, batch.inventoryEffective)"
+          :key="tag"
+          class="batch-source-tag"
+        >{{ tag }}</span>
       </span>
     </div>
 
@@ -258,6 +263,7 @@ import {
   updateOutputWeight,
 } from '../services/roastingBatchService'
 import type { BatchReview, RoastingBatch, Questionnaire } from '../types'
+import { batchSourceLabels } from '../utils/batchLabels'
 import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
 import EmptyState from '../components/common/EmptyState.vue'

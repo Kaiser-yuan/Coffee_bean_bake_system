@@ -92,7 +92,10 @@
               </thead>
               <tbody>
                 <tr v-for="row in editableRows" :key="row.item_id" :class="{ dup: row.is_duplicate, failed: row.parse_status === 'failed' }">
-                  <td class="fname" :title="row.filename">{{ row.filename }}</td>
+                  <td class="fname" :title="row.parse_error_message || row.filename">
+                    {{ row.filename }}
+                    <div v-if="row.parse_error_message" class="parse-error">{{ row.parse_error_message }}</div>
+                  </td>
                   <td>
                     <input
                       v-if="row.parse_status === 'parsed'"
@@ -224,6 +227,7 @@ type EditableRow = {
   output_weight_grams: number | null
   inventory_effective: boolean
   parse_status: 'parsed' | 'failed'
+  parse_error_message: string | null
   is_duplicate: boolean
   summary: Record<string, number | null>
 }
@@ -293,6 +297,10 @@ async function doPreview() {
   if (!selectedFiles.value.length) return
   loading.value = true
   try {
+    if (preview.value?.job_id) {
+      await cancelBulkImportJob(preview.value.job_id).catch(() => {})
+      preview.value = null
+    }
     const res = await previewPurchaseBatchCsvImport(props.purchaseBatchId, selectedFiles.value, {
       default_input_weight_grams: defaultInputWeight.value ?? undefined,
       inventory_effective_default: inventoryEffectiveDefault.value,
@@ -311,6 +319,7 @@ async function doPreview() {
       output_weight_grams: it.output_weight_grams ?? null,
       inventory_effective: it.inventory_effective,
       parse_status: it.parse_status,
+      parse_error_message: it.parse_error_message,
       is_duplicate: it.is_duplicate,
       summary: it.summary as Record<string, number | null>,
     }))
@@ -425,6 +434,7 @@ function shortId(id: string | null): string {
 .tag-ok { background: var(--success-subtle); color: var(--success); }
 .tag-fail { background: var(--danger-subtle); color: var(--danger); }
 .tag-dup { background: var(--warning-subtle); color: var(--warning); }
+.parse-error { margin-top: 3px; color: var(--danger); white-space: normal; max-width: 260px; }
 
 .batch-tools { display: flex; align-items: center; gap: 8px; margin-top: 12px; font-size: var(--fs-sm); color: var(--text-secondary); }
 .error-text, .error-list { color: var(--danger); font-size: var(--fs-sm); margin: 10px 0 0; }
