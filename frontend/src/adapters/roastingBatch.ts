@@ -41,5 +41,6 @@ export function toRoastingBatch(dto: RoastingBatchResponseDto): RoastingBatch {
     entryMode: dto.entry_mode || undefined,
     inventoryEffective: dto.inventory_effective ?? undefined,
     sourceNote: dto.source_note || undefined,
+    greenBeanIsArchived: dto.green_bean_is_archived ?? undefined,
   }
 }

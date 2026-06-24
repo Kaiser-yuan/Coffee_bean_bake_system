@@ -20,18 +20,19 @@ async function getMock() {
 }
 
 // ---- List ----
-export async function fetchRoastingBatches(): Promise<{
+export async function fetchRoastingBatches(params?: {
+  bean_archive_status?: 'active' | 'archived' | 'all'
+}): Promise<{
   items: RoastingBatch[]
   total: number
 }> {
   if (isDemoMode) {
     const m = await getMock()
     const res = await m.apiGetRoastingBatches()
-    // items are already RoastingBatch (mock returns domain type directly)
     return { items: res.items as RoastingBatch[], total: res.total }
   }
   const res: RoastingBatchListResponseDto = await realApi.listRoastingBatches({
-    has_curve: undefined,
+    bean_archive_status: params?.bean_archive_status ?? 'active',
   })
   return {
     items: res.items.map(toRoastingBatch),

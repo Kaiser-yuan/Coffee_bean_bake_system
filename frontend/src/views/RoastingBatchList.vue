@@ -11,6 +11,11 @@
     <div class="filter-bar">
       <div class="filter-row">
         <input v-model="filters.greenBeanName" type="text" class="input search-input" placeholder="搜索生豆名称…" />
+        <select v-model="filters.beanArchiveStatus" class="select" @change="fetchBatches">
+          <option value="active">在用生豆批次</option>
+          <option value="archived">已归档生豆批次</option>
+          <option value="all">全部历史批次</option>
+        </select>
         <select v-model="filters.variety" class="select">
           <option value="">全部豆种</option>
           <option v-for="v in VARIETY_OPTIONS" :key="v" :value="v">{{ v }}</option>
@@ -116,6 +121,7 @@
                 :key="tag"
                 class="batch-source-tag"
               >{{ tag }}</span>
+              <span v-if="b.greenBeanIsArchived" class="batch-source-tag archived-tag">已归档生豆</span>
             </td>
             <td>
               <span class="num">{{ b.actualDate || b.plannedDate }}</span>
@@ -155,8 +161,8 @@
         </tbody>
       </table>
       <EmptyState v-else icon="🔥" title="未找到匹配批次" />
-      <div class="table-footer" v-if="filteredBatches.length">
-        <span class="text-sm text-tertiary">共 {{ filteredBatches.length }} 条</span>
+      <div class="table-footer" v-if="store.total">
+        <span class="text-sm text-tertiary">共 {{ store.total }} 条</span>
       </div>
     </template>
 
@@ -326,6 +332,7 @@ const filters = ref({
   status: '' as string,
   hasCurve: '' as string,
   dataCompleteness: '' as string,
+  beanArchiveStatus: 'active' as 'active' | 'archived' | 'all',
 })
 
 const createForm = ref({
@@ -471,8 +478,9 @@ function goToCompare() {
 }
 
 function clearFilters() {
-  filters.value = { greenBeanName: '', variety: '', process: '', region: '', status: '', hasCurve: '', dataCompleteness: '' }
+  filters.value = { greenBeanName: '', variety: '', process: '', region: '', status: '', hasCurve: '', dataCompleteness: '', beanArchiveStatus: 'active' }
   showMoreFilters.value = false
+  fetchBatches()
 }
 
 function openCreateDialog() {
@@ -527,23 +535,21 @@ async function fetchBatches() {
   contextWarning.value = ''
 
   try {
-    // Primary: batch list from store. Secondary: green-bean tree for labels.
-    // P0-2: use allSettled so a context failure does not hide the batch list.
-    // P1-1: use fetchGreenBeanTreeContext (no duplicate batch request).
+    // Primary: batch list from store. P0 archive filter: only active by default.
     const [batchResult, contextResult] = await Promise.allSettled([
-      store.fetchBatches(),
+      store.fetchBatches({ bean_archive_status: filters.value.beanArchiveStatus }),
       fetchGreenBeanTreeContext(),
     ])
 
-    if (batchResult.status === 'rejected') {
-      error.value = true
-      loadError.value = toReadableError(batchResult.reason)
-      console.error('Failed to load roasting batches', batchResult.reason)
-    } else {
+    if (batchResult.status === 'fulfilled') {
       // Update create-form default only on first load
       if (!createForm.value.greenBeanId && activeGreenBeans.value.length) {
         createForm.value.greenBeanId = activeGreenBeans.value[0].id
       }
+    } else {
+      error.value = true
+      loadError.value = toReadableError(batchResult.reason)
+      console.error('Failed to load roasting batches', batchResult.reason)
     }
 
     if (contextResult.status === 'fulfilled') {
@@ -740,6 +746,12 @@ onMounted(fetchBatches)
 .completeness-badge.missing {
   background: var(--warning-subtle);
   color: var(--warning);
+}
+
+.archived-tag {
+  background: var(--surface-subtle);
+  border: 1px solid var(--border-strong);
+  color: var(--text-tertiary);
 }
 
 .col-op { width: 60px; text-align: right; }

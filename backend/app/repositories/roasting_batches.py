@@ -19,11 +19,14 @@ class RoastingBatchRepository(BaseRepository[RoastingBatch]):
         purchase_batch_id: str | None = None,
         search: str | None = None,
         has_curve: bool | None = None,
+        bean_archive_status: str = "active",
         page: int = 1,
         page_size: int = 20,
     ) -> tuple[list[RoastingBatch], int]:
         stmt = (
             select(RoastingBatch)
+            .join(RoastingBatch.purchase_batch)
+            .join(PurchaseBatch.green_bean)
             .options(
                 selectinload(RoastingBatch.purchase_batch).selectinload(PurchaseBatch.green_bean),
                 selectinload(RoastingBatch.active_curve).selectinload(RoastingCurve.curve_file),
@@ -34,10 +37,19 @@ class RoastingBatchRepository(BaseRepository[RoastingBatch]):
             )
         )
 
+        # Archive filter: default = active (non-archived) green beans only.
+        if bean_archive_status == "active":
+            stmt = stmt.where(GreenBean.is_archived.is_(False))
+        elif bean_archive_status == "archived":
+            stmt = stmt.where(GreenBean.is_archived.is_(True))
+        # "all" adds no filter.
+
         if status:
             stmt = stmt.where(RoastingBatch.status == status)
         if purchase_batch_id:
             stmt = stmt.where(RoastingBatch.purchase_batch_id == purchase_batch_id)
+        if search:
+            stmt = stmt.where(GreenBean.name.ilike(f"%{search}%"))
 
         # has_curve: check if active_curve exists
         if has_curve is True:
@@ -45,7 +57,7 @@ class RoastingBatchRepository(BaseRepository[RoastingBatch]):
         elif has_curve is False:
             stmt = stmt.where(~RoastingBatch.active_curve.has())
 
-        # Count
+        # Count uses a subquery so archive-filters are already applied.
         count_stmt = select(func.count()).select_from(stmt.subquery())
         result = await self.db.execute(count_stmt)
         total = result.scalar_one()

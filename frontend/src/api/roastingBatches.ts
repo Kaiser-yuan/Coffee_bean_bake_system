@@ -19,6 +19,7 @@ export interface ListRoastingBatchesParams {
   purchase_batch_id?: string
   search?: string
   has_curve?: boolean
+  bean_archive_status?: 'active' | 'archived' | 'all'
   page?: number
   page_size?: number
 }
@@ -31,6 +32,7 @@ export function listRoastingBatches(
   if (params.purchase_batch_id) qs.set('purchase_batch_id', params.purchase_batch_id)
   if (params.search) qs.set('search', params.search)
   if (params.has_curve !== undefined) qs.set('has_curve', String(params.has_curve))
+  if (params.bean_archive_status) qs.set('bean_archive_status', params.bean_archive_status)
   if (params.page) qs.set('page', String(params.page))
   if (params.page_size) qs.set('page_size', String(params.page_size))
   const query = qs.toString()

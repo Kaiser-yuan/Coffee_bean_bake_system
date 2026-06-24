@@ -177,6 +177,7 @@ export type RoastingBatchResponseDto = {
   } | null
   allowed_actions?: string[]
   green_bean_name: string | null
+  green_bean_is_archived?: boolean
   purchase_batch_label: string | null
   curve_file_summary?: {
     curve_file_id: string | null

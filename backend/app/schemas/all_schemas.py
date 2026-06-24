@@ -303,6 +303,7 @@ class RoastingBatchResponse(BaseModel):
     completeness: BatchCompleteness | None = None
     allowed_actions: list[str] = Field(default_factory=list)
     green_bean_name: str | None = None
+    green_bean_is_archived: bool = False
     purchase_batch_label: str | None = None
     curve_file_summary: CurveFileSummary | None = None
 

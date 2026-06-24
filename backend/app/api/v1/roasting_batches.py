@@ -1,6 +1,7 @@
 """Roasting batches API."""
 import random
 from datetime import datetime, timezone, timedelta
+from typing import Literal
 
 from fastapi import APIRouter
 
@@ -57,6 +58,11 @@ def _to_batch_response(batch: RoastingBatch) -> RoastingBatchResponse:
         completeness=BatchCompleteness(**compute_batch_completeness(batch)),
         allowed_actions=compute_allowed_actions(batch),
         green_bean_name=gb_name,
+        green_bean_is_archived=(
+            batch.purchase_batch.green_bean.is_archived
+            if batch.purchase_batch and batch.purchase_batch.green_bean
+            else False
+        ),
         purchase_batch_label=pb_label,
         curve_file_summary=(
             {
@@ -85,18 +91,21 @@ async def list_roasting_batches(
     purchase_batch_id: str | None = None,
     search: str | None = None,
     has_curve: bool | None = None,
+    bean_archive_status: Literal["active", "archived", "all"] = "active",
     page: int = 1,
     page_size: int = 20,
     db: DBSessionDep = None,
     _user: CurrentUserDep = None,
 ):
-    """List roasting batches with filters."""
+    """List roasting batches with filters. Defaults to active (non-archived)
+    green beans only so archived history does not flood the main list."""
     repo = RoastingBatchRepository(db)
     items, total = await repo.get_list(
         status=status,
         purchase_batch_id=purchase_batch_id,
         search=search,
         has_curve=has_curve,
+        bean_archive_status=bean_archive_status,
         page=page,
         page_size=page_size,
     )

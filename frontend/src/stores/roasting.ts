@@ -29,10 +29,10 @@ export const useRoastingStore = defineStore('roasting', () => {
     compareSelection.value = new Set()
   }
 
-  async function fetchBatches() {
+  async function fetchBatches(params?: { bean_archive_status?: 'active' | 'archived' | 'all' }) {
     loading.value = true
     try {
-      const res = await fetchRoastingBatches()
+      const res = await fetchRoastingBatches(params)
       batches.value = res.items
       total.value = res.total
     } finally {

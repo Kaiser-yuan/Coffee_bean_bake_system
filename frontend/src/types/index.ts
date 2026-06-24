@@ -135,6 +135,8 @@ export interface RoastingBatch {
   inventoryEffective?: boolean
   /** 数据来源备注 */
   sourceNote?: string
+  /** 生豆是否已归档（来自后端响应，不依赖上下文） */
+  greenBeanIsArchived?: boolean
 }
 
 export type CurveAlignBy =
