@@ -40,6 +40,21 @@ export type GreenBeanDto = {
   harvest_season: string | null
   vendor_flavor_description: string | null
   first_created_at: string | null
+  is_archived: boolean
+  archived_at: string | null
+}
+
+export type GreenBeanUpdateRequestDto = {
+  name?: string
+  variety?: string | null
+  process?: string | null
+  region?: string | null
+  country?: string | null
+  farm?: string | null
+  elevation?: string | null
+  brand?: string | null
+  harvest_season?: string | null
+  vendor_flavor_description?: string | null
 }
 
 export type RoastingBatchTreeDto = {

@@ -68,6 +68,13 @@ export function voidRoastingBatch(
   )
 }
 
+export function deleteRoastingBatch(batchId: string) {
+  return apiRequest<{ status: 'deleted'; batch_id: string }>(
+    `/roasting-batches/${batchId}`,
+    { method: 'DELETE', auth: true },
+  )
+}
+
 export function updateOutputWeight(
   batchId: string,
   outputWeightGrams: number,

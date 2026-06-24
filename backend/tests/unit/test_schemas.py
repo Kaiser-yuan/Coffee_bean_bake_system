@@ -10,6 +10,7 @@ from app.schemas.all_schemas import (
     EvaluationSubmitRequest,
     InventoryAdjustmentRequest,
     GreenBeanWithFirstPurchaseRequest,
+    GreenBeanUpdateRequest,
     NextRoastPlanRequest,
     BulkImportCommitItem,
 )
@@ -130,6 +131,21 @@ class TestGreenBeanWithFirstPurchase:
                 name="Test Bean",
                 total_weight_grams=0,
             )
+
+
+class TestGreenBeanUpdate:
+    def test_explicit_null_can_clear_optional_field(self):
+        req = GreenBeanUpdateRequest(brand=None)
+        assert req.model_fields_set == {"brand"}
+        assert req.brand is None
+
+    def test_empty_payload_rejected(self):
+        with pytest.raises(ValidationError):
+            GreenBeanUpdateRequest()
+
+    def test_blank_name_rejected(self):
+        with pytest.raises(ValidationError):
+            GreenBeanUpdateRequest(name="   ")
 
 
 class TestNextRoastPlan:

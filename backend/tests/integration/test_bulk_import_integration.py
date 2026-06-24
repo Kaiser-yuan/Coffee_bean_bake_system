@@ -705,3 +705,60 @@ class TestPublicEvaluationTerms:
             )
         ).scalar_one()
         assert after == 0  # free text never created a standard term
+
+
+class TestGreenBeanArchiveFiltering:
+    @pytest.mark.asyncio
+    async def test_update_and_restore_endpoints_round_trip(self, db):
+        from datetime import datetime, timezone
+        from uuid import uuid4
+
+        from app.api.v1.green_beans import restore_green_bean, update_green_bean
+        from app.models.all_models import GreenBean
+        from app.schemas.all_schemas import GreenBeanUpdateRequest
+
+        bean = GreenBean(
+            name=f"endpoint-round-trip-{uuid4()}",
+            brand="旧品牌",
+            is_archived=True,
+            archived_at=datetime.now(timezone.utc),
+        )
+        db.add(bean)
+        await db.flush()
+
+        response = await update_green_bean(
+            bean.id,
+            GreenBeanUpdateRequest(name="已编辑生豆", brand=None),
+            db,
+            None,
+        )
+        assert response.name == "已编辑生豆"
+        assert response.brand is None
+
+        restored = await restore_green_bean(bean.id, db, None)
+        assert restored["status"] == "restored"
+        assert bean.is_archived is False
+        assert bean.archived_at is None
+        assert bean.updated_at is not None
+
+    @pytest.mark.asyncio
+    async def test_tree_repository_separates_active_archived_and_all(self, db):
+        from uuid import uuid4
+
+        from app.models.all_models import GreenBean
+        from app.repositories.green_beans import GreenBeanRepository
+
+        marker = f"archive-filter-{uuid4()}"
+        active = GreenBean(name=f"{marker}-active", is_archived=False)
+        archived = GreenBean(name=f"{marker}-archived", is_archived=True)
+        db.add_all([active, archived])
+        await db.flush()
+
+        repo = GreenBeanRepository(db)
+        active_rows = await repo.get_tree(search=marker, archive_status="active")
+        archived_rows = await repo.get_tree(search=marker, archive_status="archived")
+        all_rows = await repo.get_tree(search=marker, archive_status="all")
+
+        assert [row.id for row in active_rows] == [active.id]
+        assert [row.id for row in archived_rows] == [archived.id]
+        assert {row.id for row in all_rows} == {active.id, archived.id}

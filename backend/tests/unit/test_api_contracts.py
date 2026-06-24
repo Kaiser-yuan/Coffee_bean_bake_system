@@ -11,6 +11,14 @@ def test_bulk_import_and_backfill_routes_are_registered():
     assert "/api/v1/backfills/roasting-csv/commit" in paths
 
 
+def test_green_bean_and_planned_batch_maintenance_routes_are_registered():
+    paths = app.openapi()["paths"]
+    assert "patch" in paths["/api/v1/green-beans/{green_bean_id}"]
+    assert "delete" in paths["/api/v1/green-beans/{green_bean_id}"]
+    assert "post" in paths["/api/v1/green-beans/{green_bean_id}/restore"]
+    assert "delete" in paths["/api/v1/roasting-batches/{batch_id}"]
+
+
 def test_internal_routes_require_bearer_authentication():
     paths = app.openapi()["paths"]
     protected = (

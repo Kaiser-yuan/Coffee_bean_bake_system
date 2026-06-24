@@ -114,3 +114,76 @@ async def lock_purchase_batch(
         .with_for_update()
     )
     return result.scalar_one_or_none()
+
+
+async def calculate_remaining_stocks(
+    db: AsyncSession,
+    purchase_batch_ids: list[str],
+) -> dict[str, int]:
+    """Batch version of ``calculate_remaining_stock`` — one round-trip for all IDs.
+
+    Uses aggregate subqueries so the N+1 problem in the green-bean tree
+    endpoint (one query per purchase batch) is eliminated.
+    """
+    if not purchase_batch_ids:
+        return {}
+
+    # Fetch purchase batches in bulk
+    result = await db.execute(
+        select(PurchaseBatch).where(PurchaseBatch.id.in_(purchase_batch_ids))
+    )
+    pbs = list(result.scalars().all())
+    pb_map = {pb.id: pb for pb in pbs}
+
+    # Sum completed, inventory-effective roast batch inputs per purchase batch
+    consumed_subq = (
+        select(
+            RoastingBatch.purchase_batch_id,
+            func.coalesce(func.sum(RoastingBatch.actual_input_weight_grams), 0).label("consumed"),
+        )
+        .where(
+            RoastingBatch.purchase_batch_id.in_(purchase_batch_ids),
+            RoastingBatch.status == "completed",
+            RoastingBatch.inventory_effective.is_(True),
+        )
+        .group_by(RoastingBatch.purchase_batch_id)
+    ).subquery()
+
+    # Sum adjustment amounts per purchase batch
+    adj_subq = (
+        select(
+            InventoryAdjustment.purchase_batch_id,
+            func.coalesce(func.sum(InventoryAdjustment.amount_grams), 0).label("adjustments"),
+        )
+        .where(InventoryAdjustment.purchase_batch_id.in_(purchase_batch_ids))
+        .group_by(InventoryAdjustment.purchase_batch_id)
+    ).subquery()
+
+    # One join to compute all remainders
+    combined = (
+        select(
+            PurchaseBatch.id.label("pb_id"),
+            (
+                func.coalesce(PurchaseBatch.opening_stock_grams, PurchaseBatch.total_weight_grams)
+                - func.coalesce(consumed_subq.c.consumed, 0)
+                + func.coalesce(adj_subq.c.adjustments, 0)
+            ).label("remaining"),
+        )
+        .outerjoin(consumed_subq, consumed_subq.c.purchase_batch_id == PurchaseBatch.id)
+        .outerjoin(adj_subq, adj_subq.c.purchase_batch_id == PurchaseBatch.id)
+        .where(PurchaseBatch.id.in_(purchase_batch_ids))
+    )
+    result2 = await db.execute(combined)
+    rows = result2.all()
+
+    result_dict: dict[str, int] = {}
+    for row in rows:
+        remaining = row.remaining or 0
+        result_dict[row.pb_id] = max(0, remaining)
+
+    # Ensure every requested ID has an entry (default to 0 if PB not found)
+    for bid in purchase_batch_ids:
+        if bid not in result_dict:
+            result_dict[bid] = 0
+
+    return result_dict

@@ -27,6 +27,10 @@
           <option value="">全部产区</option>
           <option v-for="r in REGION_OPTIONS" :key="r" :value="r">{{ r }}</option>
         </select>
+        <select v-if="!isDemoMode" v-model="archiveStatus" class="select" @change="onFilterChange">
+          <option value="active">在用生豆</option>
+          <option value="archived">已归档生豆</option>
+        </select>
       </div>
     </div>
 
@@ -66,7 +70,21 @@
                 ></span>
                 {{ formatWeight(getTotalStock(bean.id)) }}
               </td>
-              <td></td>
+              <td>
+                <div v-if="!isDemoMode" class="bean-actions">
+                  <button class="btn btn-xs btn-secondary" @click.stop="openProfileEdit(bean)">编辑</button>
+                  <button
+                    v-if="bean.isArchived"
+                    class="btn btn-xs btn-secondary"
+                    @click.stop="restoreBean(bean)"
+                  >恢复</button>
+                  <button
+                    v-else
+                    class="btn btn-xs btn-danger"
+                    @click.stop="deleteOrArchiveBean(bean)"
+                  >{{ getPurchaseBatches(bean.id).length ? '归档' : '删除' }}</button>
+                </div>
+              </td>
             </tr>
 
             <!-- Level 2 & 3: 采购批次 + 烘焙批次 -->
@@ -155,7 +173,7 @@
     <div v-if="drawerOpen" class="drawer-overlay" @click.self="closeDrawer">
       <div class="drawer">
         <div class="drawer-header">
-          <h3>{{ editMode ? '新增采购批次' : '录入生豆' }}</h3>
+          <h3>{{ profileEditMode ? '编辑生豆档案' : (editMode ? '新增采购批次' : '录入生豆') }}</h3>
           <button class="drawer-close" @click="closeDrawer">✕</button>
         </div>
         <div class="drawer-body">
@@ -168,7 +186,7 @@
             placeholder="输入名称搜索已有档案…"
             @input="onBeanSearch"
           />
-          <div v-if="beanSuggestions.length" class="suggestions">
+          <div v-if="!profileEditMode && beanSuggestions.length" class="suggestions">
             <div
               v-for="s in beanSuggestions"
               :key="s.id"
@@ -225,32 +243,33 @@
             </div>
           </template>
 
-          <!-- 采购批次字段（始终显示） -->
-          <div class="form-divider">采购信息</div>
-          <div class="form-row">
-            <label class="form-label">采购日期</label>
-            <input v-model="form.purchaseDate" type="date" class="input" />
-          </div>
-          <div class="form-row">
-            <label class="form-label">采购总量 (g)</label>
-            <input v-model.number="form.totalWeight" type="number" class="input" />
-          </div>
-          <div class="form-row">
-            <label class="form-label">采购单价 (元/kg)</label>
-            <input v-model.number="form.pricePerKg" type="number" class="input" step="0.01" placeholder="填写单价后自动计算总价" />
-          </div>
-          <div class="form-row">
-            <label class="form-label">含水率 (%)</label>
-            <input v-model.number="form.moistureContent" type="number" class="input" step="0.1" />
-          </div>
-          <div class="form-row">
-            <label class="form-label">供应商</label>
-            <input v-model="form.supplier" type="text" class="input" />
-          </div>
-          <div class="form-row">
-            <label class="form-label">批次号</label>
-            <input v-model="form.lotNumber" type="text" class="input" />
-          </div>
+          <template v-if="!profileEditMode">
+            <div class="form-divider">采购信息</div>
+            <div class="form-row">
+              <label class="form-label">采购日期</label>
+              <input v-model="form.purchaseDate" type="date" class="input" />
+            </div>
+            <div class="form-row">
+              <label class="form-label">采购总量 (g)</label>
+              <input v-model.number="form.totalWeight" type="number" class="input" />
+            </div>
+            <div class="form-row">
+              <label class="form-label">采购单价 (元/kg)</label>
+              <input v-model.number="form.pricePerKg" type="number" class="input" step="0.01" placeholder="填写单价后自动计算总价" />
+            </div>
+            <div class="form-row">
+              <label class="form-label">含水率 (%)</label>
+              <input v-model.number="form.moistureContent" type="number" class="input" step="0.1" />
+            </div>
+            <div class="form-row">
+              <label class="form-label">供应商</label>
+              <input v-model="form.supplier" type="text" class="input" />
+            </div>
+            <div class="form-row">
+              <label class="form-label">批次号</label>
+              <input v-model="form.lotNumber" type="text" class="input" />
+            </div>
+          </template>
         </div>
         <div class="drawer-footer">
           <button class="btn btn-secondary" @click="closeDrawer">取消</button>
@@ -351,9 +370,11 @@ const loading = ref(false)
 const error = ref(false)
 const searchText = ref('')
 const filters = ref({ variety: '', process: '', region: '' })
+const archiveStatus = ref<'active' | 'archived'>('active')
 const expanded = ref(new Set<string>())
 const drawerOpen = ref(false)
 const editMode = ref(false)
+const profileEditMode = ref(false)
 const selectedBeanId = ref('')
 
 // 批量 CSV 生成烘焙批次弹窗
@@ -487,8 +508,29 @@ function goToCurve(batchId: string) {
 // ---------- 录入抽屉 ----------
 function openDrawer() {
   editMode.value = false
+  profileEditMode.value = false
   selectedBeanId.value = ''
   resetForm()
+  drawerOpen.value = true
+}
+
+function openProfileEdit(bean: GreenBean) {
+  editMode.value = false
+  profileEditMode.value = true
+  selectedBeanId.value = bean.id
+  resetForm()
+  form.value = {
+    ...form.value,
+    name: bean.name,
+    variety: bean.variety,
+    process: bean.process,
+    region: bean.region,
+    brand: bean.brand || '',
+    season: bean.season || '',
+    farm: bean.farm || '',
+    elevation: bean.elevation || '',
+    vendorFlavorDescription: bean.vendorFlavorDescription || '',
+  }
   drawerOpen.value = true
 }
 
@@ -518,6 +560,7 @@ function resetForm() {
 }
 
 async function onBeanSearch() {
+  if (profileEditMode.value) return
   if (!form.value.name.trim()) {
     beanSuggestions.value = []
     return
@@ -543,6 +586,7 @@ async function onBeanSearch() {
 
 function selectExistingBean(bean: GreenBean) {
   editMode.value = true
+  profileEditMode.value = false
   selectedBeanId.value = bean.id
   form.value.name = bean.name
   form.value.variety = bean.variety
@@ -554,7 +598,19 @@ function selectExistingBean(bean: GreenBean) {
 async function onSubmit() {
   // Step 1: Save
   try {
-    if (editMode.value) {
+    if (profileEditMode.value) {
+      await greenBeanApi.updateGreenBean(selectedBeanId.value, {
+        name: form.value.name.trim(),
+        variety: form.value.variety || null,
+        process: form.value.process || null,
+        region: form.value.region || null,
+        brand: form.value.brand || null,
+        harvest_season: form.value.season || null,
+        farm: form.value.farm || null,
+        elevation: form.value.elevation || null,
+        vendor_flavor_description: form.value.vendorFlavorDescription || null,
+      })
+    } else if (editMode.value) {
       await addPurchaseBatch(selectedBeanId.value, form.value)
     } else {
       await createGreenBeanWithFirstPurchase(form.value)
@@ -573,6 +629,30 @@ async function onSubmit() {
     await fetchData()
   } catch {
     alert('保存已成功，但刷新列表失败。请手动刷新页面或清空筛选后重试。')
+  }
+}
+
+async function deleteOrArchiveBean(bean: GreenBean) {
+  const hasPurchases = getPurchaseBatches(bean.id).length > 0
+  const action = hasPurchases ? '归档' : '永久删除'
+  if (!window.confirm(`确认${action}生豆“${bean.name}”吗？`)) return
+  try {
+    await greenBeanApi.deleteOrArchiveGreenBean(bean.id)
+    invalidateRoastContext()
+    await fetchData()
+  } catch (err) {
+    alert(err instanceof ApiError ? err.message : `${action}失败`)
+  }
+}
+
+async function restoreBean(bean: GreenBean) {
+  if (!window.confirm(`确认恢复生豆“${bean.name}”吗？`)) return
+  try {
+    await greenBeanApi.restoreGreenBean(bean.id)
+    invalidateRoastContext()
+    await fetchData()
+  } catch (err) {
+    alert(err instanceof ApiError ? err.message : '恢复失败')
   }
 }
 
@@ -647,6 +727,7 @@ async function fetchData() {
       variety: filters.value.variety || undefined,
       process: filters.value.process || undefined,
       region: filters.value.region || undefined,
+      archive_status: archiveStatus.value,
     })
 
     const mapped = toGreenBeanTree(tree)
@@ -722,7 +803,13 @@ onMounted(fetchData)
 
 .col-name { width: 300px; }
 .col-stock { width: 170px; }
-.col-action { width: 100px; }
+.col-action { width: 180px; }
+
+.bean-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-1);
+}
 
 .row-l1 { cursor: pointer; }
 .row-l1:hover { background: var(--surface-selected); }
@@ -812,6 +899,9 @@ onMounted(fetchData)
   border-color: var(--border-default);
 }
 .btn-secondary:hover { background: var(--app-bg); }
+
+.btn-danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+.btn-danger:hover { opacity: 0.9; }
 
 /* Form controls */
 .input, .select {

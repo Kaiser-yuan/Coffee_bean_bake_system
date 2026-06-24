@@ -16,6 +16,8 @@ export function toGreenBean(dto: GreenBeanDto): GreenBean {
     season: dto.harvest_season || undefined,
     vendorFlavorDescription: dto.vendor_flavor_description || undefined,
     firstCreated: dto.first_created_at || '',
+    isArchived: dto.is_archived,
+    archivedAt: dto.archived_at || undefined,
   }
 }
 
@@ -31,6 +33,7 @@ export function toGreenBeanSuggestion(dto: GreenBeanMatchDto): GreenBean {
     brand: dto.brand || undefined,
     season: dto.harvest_season || undefined,
     firstCreated: '',
+    isArchived: false,
   }
 }
 

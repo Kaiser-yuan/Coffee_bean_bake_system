@@ -18,6 +18,7 @@ from ...repositories.curves import CurveFileRepository, RoastingCurveRepository
 from ...repositories.roasting_batches import RoastingBatchRepository
 from ...parsers.kaleido_m1 import parse_kaleido_m1
 from ...services.curve import build_curve_response, parse_and_activate_curve, compute_curve_comparison
+from ..upload_helpers import read_uploads_with_limits
 from ...schemas.all_schemas import (
     CurveFileResponse, CurveResponse, CurveComparisonResponse,
 )
@@ -50,14 +51,19 @@ async def upload_curve_file(
     if not batch:
         raise NotFoundException("RoastingBatch", batch_id)
 
-    # Read file
-    content = await file.read()
-    if len(content) > settings.upload_max_size_bytes:
-        raise ValidationException(f"文件大小超过限制 ({settings.upload_max_size_bytes // 1024 // 1024}MB)")
+    # Use the shared chunked reader so oversized uploads are rejected while
+    # streaming rather than being loaded into memory first.
+    uploaded = (await read_uploads_with_limits(
+        [file],
+        max_files=1,
+        max_single_bytes=settings.upload_max_size_bytes,
+        max_total_bytes=settings.upload_max_size_bytes,
+    ))[0]
+    content = uploaded.content
 
     # Pre-parse to get hash
     try:
-        parsed = parse_kaleido_m1(content, file.filename or "unknown.csv")
+        parsed = parse_kaleido_m1(content, uploaded.filename)
     except ValueError as e:
         raise CurveParseFailedException(str(e))
 
@@ -70,7 +76,7 @@ async def upload_curve_file(
     # Create curve file record
     cf = CurveFile(
         roasting_batch_id=batch_id,
-        original_filename=file.filename or "unknown.csv",
+        original_filename=uploaded.filename,
         storage_path="",  # Will be updated
         file_size_bytes=len(content),
         file_hash=parsed.file_hash,

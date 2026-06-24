@@ -89,6 +89,8 @@ class GreenBeanResponse(BaseModel):
     harvest_season: str | None = None
     vendor_flavor_description: str | None = None
     first_created_at: str | None = None
+    is_archived: bool = False
+    archived_at: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -149,12 +151,10 @@ class GreenBeanUpdateRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_at_least_one_field(self):
-        fields = (
-            "name", "variety", "process", "region", "country", "farm",
-            "elevation", "brand", "harvest_season", "vendor_flavor_description",
-        )
-        if all(getattr(self, f, None) is None for f in fields):
+        if not self.model_fields_set:
             raise ValueError("至少需要提供一个字段进行更新")
+        if "name" in self.model_fields_set and (self.name is None or not self.name.strip()):
+            raise ValueError("生豆名称不能为空")
         return self
 
 

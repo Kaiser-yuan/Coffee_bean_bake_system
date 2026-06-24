@@ -14,7 +14,10 @@ class GreenBeanRepository(BaseRepository[GreenBean]):
         stmt = (
             select(GreenBean)
             .options(selectinload(GreenBean.process))
-            .where(GreenBean.name.ilike(f"%{query}%"))
+            .where(
+                GreenBean.name.ilike(f"%{query}%"),
+                GreenBean.is_archived.is_(False),
+            )
             .limit(limit)
         )
         result = await self.db.execute(stmt)
@@ -26,6 +29,7 @@ class GreenBeanRepository(BaseRepository[GreenBean]):
         variety: str | None = None,
         process: str | None = None,
         region: str | None = None,
+        archive_status: str = "active",
     ) -> list[GreenBean]:
         stmt = (
             select(GreenBean)
@@ -36,6 +40,11 @@ class GreenBeanRepository(BaseRepository[GreenBean]):
             )
             .order_by(GreenBean.name)
         )
+
+        if archive_status == "active":
+            stmt = stmt.where(GreenBean.is_archived.is_(False))
+        elif archive_status == "archived":
+            stmt = stmt.where(GreenBean.is_archived.is_(True))
 
         if search:
             stmt = stmt.where(

@@ -1,5 +1,6 @@
 """Green beans API endpoints."""
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter
 from sqlalchemy import select
@@ -11,7 +12,7 @@ from ...models.all_models import GreenBean, PurchaseBatch, RoastingBatch, Standa
 from ...repositories.green_beans import GreenBeanRepository
 from ...repositories.purchase_batches import PurchaseBatchRepository
 from ...repositories.terms import TermRepository
-from ...services.inventory import calculate_remaining_stock, append_inventory_ledger
+from ...services.inventory import calculate_remaining_stock, calculate_remaining_stocks, append_inventory_ledger
 from ...schemas.all_schemas import (
     GreenBeanMatchResponse, GreenBeanResponse,
     GreenBeanWithFirstPurchaseRequest, PurchaseBatchCreateRequest,
@@ -36,6 +37,8 @@ def _gb_to_response(gb: GreenBean) -> GreenBeanResponse:
         harvest_season=gb.harvest_season,
         vendor_flavor_description=gb.vendor_flavor_description,
         first_created_at=gb.first_created_at.isoformat() if gb.first_created_at else None,
+        is_archived=gb.is_archived,
+        archived_at=gb.archived_at.isoformat() if gb.archived_at else None,
     )
 
 
@@ -91,6 +94,7 @@ async def get_green_bean_tree(
     variety: str | None = None,
     process: str | None = None,
     region: str | None = None,
+    archive_status: Literal["active", "archived", "all"] = "active",
     db: DBSessionDep = None,
     _user: CurrentUserDep = None,
 ):
@@ -98,7 +102,13 @@ async def get_green_bean_tree(
     repo = GreenBeanRepository(db)
 
     # 1. Load green beans with eager-loaded relationships
-    beans = await repo.get_tree(search=search, variety=variety, process=process, region=region)
+    beans = await repo.get_tree(
+        search=search,
+        variety=variety,
+        process=process,
+        region=region,
+        archive_status=archive_status,
+    )
 
     # 2. Collect all purchase batch IDs
     all_pbs = [pb for bean in beans for pb in bean.purchase_batches]
@@ -115,12 +125,15 @@ async def get_green_bean_tree(
         for rb in rb_result.scalars().all():
             rb_by_pb.setdefault(rb.purchase_batch_id, []).append(rb)
 
-    # 4. Build tree response with stock calculation
+    # 4. Batch-calculate all remaining stocks in one query (P1-2: eliminate N+1).
+    remaining_by_pb = await calculate_remaining_stocks(db, pb_ids)
+
+    # 5. Build tree response with pre-computed stock values.
     tree: list[GreenBeanTreeResponse] = []
     for bean in beans:
         pb_list: list[PurchaseBatchTreeResponse] = []
         for pb in bean.purchase_batches:
-            remaining = await calculate_remaining_stock(db, pb.id)
+            remaining = remaining_by_pb.get(pb.id, 0)
             supplier_name = pb.supplier.value if pb.supplier is not None else None
             rbs = rb_by_pb.get(pb.id, [])
             pb_list.append(PurchaseBatchTreeResponse(
@@ -153,6 +166,8 @@ async def get_green_bean_tree(
             harvest_season=bean.harvest_season,
             vendor_flavor_description=bean.vendor_flavor_description,
             first_created_at=bean.first_created_at.isoformat() if bean.first_created_at else None,
+            is_archived=bean.is_archived,
+            archived_at=bean.archived_at.isoformat() if bean.archived_at else None,
             purchase_batches=pb_list,
         ))
 
@@ -342,33 +357,32 @@ async def update_green_bean(
     if not gb:
         raise NotFoundException("GreenBean", green_bean_id)
 
-    from datetime import datetime as _dt, timezone as _tz
-    if body.name is not None:
+    fields_set = body.model_fields_set
+    if "name" in fields_set:
         gb.name = body.name
-    if body.variety is not None:
-        term_repo = TermRepository(db)
-        vt = await term_repo.get_or_create_value("variety", body.variety)
-        gb.variety_term_id = vt.id
-    if body.process is not None:
-        term_repo = TermRepository(db)
-        pt = await term_repo.get_or_create_value("process", body.process)
-        gb.process_term_id = pt.id
-    if body.region is not None:
-        gb.region = body.region
-    if body.country is not None:
-        gb.country = body.country
-    if body.farm is not None:
-        gb.farm = body.farm
-    if body.elevation is not None:
-        gb.elevation = body.elevation
-    if body.brand is not None:
-        gb.brand = body.brand
-    if body.harvest_season is not None:
-        gb.harvest_season = body.harvest_season
-    if body.vendor_flavor_description is not None:
-        gb.vendor_flavor_description = body.vendor_flavor_description
-    gb.updated_at = _dt.now(_tz.utc)
+    if "variety" in fields_set:
+        if body.variety is None:
+            gb.variety_term_id = None
+        else:
+            term_repo = TermRepository(db)
+            vt = await term_repo.get_or_create_value("variety", body.variety)
+            gb.variety_term_id = vt.id
+    if "process" in fields_set:
+        if body.process is None:
+            gb.process_term_id = None
+        else:
+            term_repo = TermRepository(db)
+            pt = await term_repo.get_or_create_value("process", body.process)
+            gb.process_term_id = pt.id
+    for field in (
+        "region", "country", "farm", "elevation", "brand",
+        "harvest_season", "vendor_flavor_description",
+    ):
+        if field in fields_set:
+            setattr(gb, field, getattr(body, field))
+    gb.updated_at = datetime.now(timezone.utc)
     await db.flush()
+    await db.refresh(gb, attribute_names=["variety", "process"])
     return _gb_to_response(gb)
 
 
@@ -393,9 +407,8 @@ async def delete_green_bean(
         return {"status": "deleted", "green_bean_id": green_bean_id}
 
     # Bean has purchase batches — archive instead of physical delete.
-    from datetime import datetime as _dt, timezone as _tz
     gb.is_archived = True
-    gb.archived_at = _dt.now(_tz.utc)
+    gb.archived_at = datetime.now(timezone.utc)
     gb.updated_at = gb.archived_at
     await db.flush()
     return {"status": "archived", "green_bean_id": green_bean_id}
@@ -417,5 +430,6 @@ async def restore_green_bean(
         raise ValidationException("该生豆未被归档")
     gb.is_archived = False
     gb.archived_at = None
+    gb.updated_at = datetime.now(timezone.utc)
     await db.flush()
     return {"status": "restored", "green_bean_id": green_bean_id}

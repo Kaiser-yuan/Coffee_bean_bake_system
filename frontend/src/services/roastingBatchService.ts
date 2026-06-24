@@ -102,6 +102,17 @@ export async function voidRoastingBatch(batchId: string): Promise<RoastingBatch>
   return toRoastingBatch(res)
 }
 
+// ---- Delete a planned batch ----
+export async function deleteRoastingBatch(batchId: string): Promise<void> {
+  if (isDemoMode) {
+    const m = await getMock()
+    const index = m.mockRoastingBatches.findIndex((x) => x.id === batchId)
+    if (index >= 0) m.mockRoastingBatches.splice(index, 1)
+    return
+  }
+  await realApi.deleteRoastingBatch(batchId)
+}
+
 // ---- Reopen (cancel completion) ----
 export async function reopenRoastingBatch(batchId: string): Promise<RoastingBatch> {
   if (isDemoMode) {

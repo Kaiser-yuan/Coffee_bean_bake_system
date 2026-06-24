@@ -72,6 +72,8 @@ export interface GreenBean {
   /** 豆商风味描述 */
   vendorFlavorDescription?: string
   firstCreated: string // ISO date
+  isArchived?: boolean
+  archivedAt?: string
 }
 
 export interface PurchaseBatch {

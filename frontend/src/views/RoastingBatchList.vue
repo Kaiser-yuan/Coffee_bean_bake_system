@@ -67,7 +67,14 @@
     </div>
 
     <LoadingState v-if="loading" text="加载批次数据…" />
-    <ErrorState v-else-if="error" :retry="true" @retry="fetchBatches" />
+    <ErrorState
+      v-else-if="error"
+      :message="loadError"
+      :retry="true"
+      @retry="fetchBatches"
+    />
+
+    <p v-if="!loading && !error && contextWarning" class="warning-banner">{{ contextWarning }}</p>
 
     <!-- 批次表格 -->
     <template v-else>
@@ -164,7 +171,7 @@
           <div class="form-row">
             <label class="form-label">生豆</label>
             <select v-model="createForm.greenBeanId" class="select" @change="onGreenBeanChange">
-              <option v-for="b in roastContext.greenBeans" :key="b.id" :value="b.id">{{ b.name }}</option>
+              <option v-for="b in activeGreenBeans" :key="b.id" :value="b.id">{{ b.name }}</option>
             </select>
           </div>
           <div class="form-row">
@@ -234,7 +241,7 @@
             </div>
             <div class="action-buttons">
               <button class="btn btn-primary" @click="doMarkComplete">确认完成</button>
-              <button class="btn btn-danger btn-sm" @click="doVoidBatch">作废计划</button>
+              <button class="btn btn-danger btn-sm" @click="doDeleteBatch">删除计划</button>
             </div>
           </template>
 
@@ -282,15 +289,17 @@ import {
 import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
 import EmptyState from '../components/common/EmptyState.vue'
+import { ApiError } from '../api/http'
 import {
   createRoastingBatch,
   completeRoastingBatch,
   updateOutputWeight,
   voidRoastingBatch,
+  deleteRoastingBatch,
   reopenRoastingBatch,
 } from '../services/roastingBatchService'
 import {
-  fetchRoastContext,
+  fetchGreenBeanTreeContext,
   invalidateRoastContext,
   getGreenBeanByBatch,
   type RoastContext,
@@ -300,11 +309,14 @@ const router = useRouter()
 const store = useRoastingStore()
 const loading = ref(false)
 const error = ref(false)
+const loadError = ref('')
+const contextWarning = ref('')
 const createOpen = ref(false)
 const showMoreFilters = ref(false)
 
 // Green-bean / purchase-batch context (loaded via service, demo-aware)
 const roastContext = ref<RoastContext>({ greenBeans: [], purchaseBatches: [], roastingBatches: [] })
+const activeGreenBeans = computed(() => roastContext.value.greenBeans.filter((bean) => !bean.isArchived))
 
 const filters = ref({
   greenBeanName: '',
@@ -393,6 +405,15 @@ async function doVoidBatch() {
   if (!actionBatch.value) return
   await voidRoastingBatch(actionBatch.value.id)
   actionModalOpen.value = false
+  await fetchBatches()
+}
+
+async function doDeleteBatch() {
+  if (!actionBatch.value) return
+  if (!window.confirm('确认删除这个待烘计划吗？此操作不会扣减库存。')) return
+  await deleteRoastingBatch(actionBatch.value.id)
+  actionModalOpen.value = false
+  invalidateRoastContext()
   await fetchBatches()
 }
 
@@ -502,21 +523,57 @@ async function onCreate() {
 async function fetchBatches() {
   loading.value = true
   error.value = false
+  loadError.value = ''
+  contextWarning.value = ''
+
   try {
-    await Promise.all([
+    // Primary: batch list from store. Secondary: green-bean tree for labels.
+    // P0-2: use allSettled so a context failure does not hide the batch list.
+    // P1-1: use fetchGreenBeanTreeContext (no duplicate batch request).
+    const [batchResult, contextResult] = await Promise.allSettled([
       store.fetchBatches(),
-      fetchRoastContext().then((ctx) => {
-        roastContext.value = ctx
-        if (!createForm.value.greenBeanId && ctx.greenBeans.length) {
-          createForm.value.greenBeanId = ctx.greenBeans[0].id
-        }
-      }),
+      fetchGreenBeanTreeContext(),
     ])
-  } catch {
+
+    if (batchResult.status === 'rejected') {
+      error.value = true
+      loadError.value = toReadableError(batchResult.reason)
+      console.error('Failed to load roasting batches', batchResult.reason)
+    } else {
+      // Update create-form default only on first load
+      if (!createForm.value.greenBeanId && activeGreenBeans.value.length) {
+        createForm.value.greenBeanId = activeGreenBeans.value[0].id
+      }
+    }
+
+    if (contextResult.status === 'fulfilled') {
+      roastContext.value = {
+        ...contextResult.value,
+        roastingBatches: [],
+      }
+    } else {
+      console.error('Failed to load green bean context', contextResult.reason)
+      contextWarning.value = `生豆信息加载失败：${toReadableError(contextResult.reason)}，批次列表仍可见`
+    }
+  } catch (e) {
+    // Should not happen with allSettled, but guard anyway.
     error.value = true
+    loadError.value = toReadableError(e)
   } finally {
     loading.value = false
   }
+}
+
+/** P1-3: Preserve the real error rather than a generic "加载失败". */
+function toReadableError(error: unknown): string {
+  if (error instanceof ApiError) {
+    const parts = [error.message || error.code]
+    // ApiError doesn't expose requestId directly; include status if available.
+    if (error.status) parts.push(`HTTP ${error.status}`)
+    return parts.join(' — ')
+  }
+  if (error instanceof Error) return error.message
+  return '未知加载错误'
 }
 
 onMounted(fetchBatches)
@@ -764,6 +821,16 @@ onMounted(fetchBatches)
 .btn-warning:hover { opacity: 0.9; }
 .btn-text { background: transparent; color: var(--text-secondary); border-color: transparent; }
 .btn-text:hover { color: var(--text-primary); background: var(--app-bg); }
+
+.warning-banner {
+  background: var(--warning-subtle);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-md);
+  padding: var(--sp-2) var(--sp-4);
+  margin-bottom: var(--sp-4);
+  font-size: var(--fs-sm);
+  color: var(--warning);
+}
 
 /* Form controls */
 .input, .select {
