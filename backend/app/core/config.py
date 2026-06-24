@@ -12,8 +12,12 @@ class Settings(BaseSettings):
     # Application
     app_name: str = "coffee-roast-api"
     app_env: Literal["development", "production", "test"] = "development"
+    app_version: str = "0.3.0"
     debug: bool = True
+    sql_echo: bool = False  # Log every SQL statement — big perf hit, keep off.
     secret_key: str = "change-me"
+    # Git commit SHA — injected at deploy/dev-start time via env.
+    app_git_sha: str = "unknown"
 
     # Database
     database_url: str = "postgresql+asyncpg://coffee:coffee123@localhost:5432/coffee_roast"

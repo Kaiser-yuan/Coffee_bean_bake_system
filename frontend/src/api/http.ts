@@ -5,6 +5,52 @@ export const apiBaseUrl =
 
 export const isDemoMode = import.meta.env.VITE_DEMO_MODE !== 'false'
 
+/** P0: backend version contract — checked once on first real-API call. */
+export interface MetaResponse {
+  service: string
+  app_version: string
+  git_sha: string
+  api_contract_version: string
+  features: string[]
+}
+
+let _meta: MetaResponse | null = null
+let _metaError: string | null = null
+let _metaPromise: Promise<MetaResponse> | null = null
+
+export async function fetchMeta(): Promise<MetaResponse> {
+  if (_meta) return _meta
+  if (_metaError) throw new Error(_metaError)
+  if (_metaPromise) return _metaPromise
+
+  const base = apiBaseUrl.replace(/\/api\/v1$/, '')
+  _metaPromise = fetch(`${base}/api/v1/meta`)
+    .then(async (r) => {
+      if (!r.ok) throw new Error(`后端不可达 (${r.status})`)
+      const data = await r.json()
+      _meta = data as MetaResponse
+      _metaPromise = null
+      return _meta
+    })
+    .catch((e) => {
+      _metaPromise = null
+      _metaError = `后端版本检查失败：${e.message}`
+      throw new Error(_metaError)
+    })
+  return _metaPromise
+}
+
+/** Ensure backend supports a required feature. Throws if not. */
+export async function requireFeature(feature: string): Promise<void> {
+  if (isDemoMode) return
+  const meta = await fetchMeta()
+  if (!meta.features.includes(feature)) {
+    throw new Error(
+      `后端进程版本过旧：当前不支持 ${feature}。\n请重启 8000 端口后端，而不是重新上传 CSV。\n当前 SHA: ${meta.git_sha}`,
+    )
+  }
+}
+
 export class ApiError extends Error {
   status: number
   code?: string

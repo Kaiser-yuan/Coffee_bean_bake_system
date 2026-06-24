@@ -295,7 +295,7 @@ import {
 import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
 import EmptyState from '../components/common/EmptyState.vue'
-import { ApiError } from '../api/http'
+import { ApiError, requireFeature } from '../api/http'
 import {
   createRoastingBatch,
   completeRoastingBatch,
@@ -535,6 +535,9 @@ async function fetchBatches() {
   contextWarning.value = ''
 
   try {
+    // Check backend version contract before issuing business requests (P0).
+    await requireFeature('bean_archive_status')
+
     // Primary: batch list from store. P0 archive filter: only active by default.
     const [batchResult, contextResult] = await Promise.allSettled([
       store.fetchBatches({ bean_archive_status: filters.value.beanArchiveStatus }),
@@ -547,9 +550,17 @@ async function fetchBatches() {
         createForm.value.greenBeanId = activeGreenBeans.value[0].id
       }
     } else {
+      const reason = batchResult.reason
       error.value = true
-      loadError.value = toReadableError(batchResult.reason)
-      console.error('Failed to load roasting batches', batchResult.reason)
+      // Version mismatch / backend down gives a specific message.
+      if (reason instanceof Error && reason.message.includes('版本过旧')) {
+        loadError.value = reason.message
+      } else if (reason instanceof Error && reason.message.includes('不可达')) {
+        loadError.value = '后端服务未启动，请确认 8000 端口可用。“' + reason.message + '”'
+      } else {
+        loadError.value = toReadableError(reason)
+      }
+      console.error('Failed to load roasting batches', reason)
     }
 
     if (contextResult.status === 'fulfilled') {

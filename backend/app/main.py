@@ -54,7 +54,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Coffee Roast API",
     description="咖啡烘焙分析系统后端 API",
-    version="0.1.0",
+    version=settings.app_version,
     lifespan=lifespan,
     docs_url="/api/v1/docs",
     openapi_url="/api/v1/openapi.json",
@@ -87,7 +87,86 @@ async def app_exception_handler(request: Request, exc: AppException):
 # Root
 @app.get("/")
 async def root():
-    return {"service": settings.app_name, "version": "0.1.0", "docs": "/api/v1/docs"}
+    return {"service": settings.app_name, "version": settings.app_version, "docs": "/api/v1/docs"}
+
+
+# Meta endpoint — version probe for frontend mismatch detection (P0).
+@app.get("/api/v1/meta")
+async def meta():
+    from .core.config import settings
+    return {
+        "service": settings.app_name,
+        "app_version": settings.app_version,
+        "git_sha": settings.app_git_sha,
+        "api_contract_version": "2026-06-24.2",
+        "features": [
+            "bean_archive_status",
+            "batch_stock_aggregation",
+            "curve_aligned_seconds",
+        ],
+    }
+
+
+# Health readiness check — DB + migration + storage (P1).
+@app.get("/api/v1/health/ready")
+async def health_ready():
+    from sqlalchemy import text
+    from pathlib import Path
+    errors: list[str] = []
+    migration_version = "unknown"
+
+    # Check DB connectivity using a fresh async session.
+    try:
+        from .core.database import async_session_factory
+        async with async_session_factory() as db:
+            await db.execute(text("SELECT 1"))
+    except Exception as e:
+        errors.append(f"database: {e}")
+
+    # Check migration head vs current.
+    try:
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+        alembic_cfg = Config(str(Path(__file__).resolve().parent.parent / "alembic.ini"))
+        script = ScriptDirectory.from_config(alembic_cfg)
+        head_rev = script.get_current_head()
+
+        async with async_session_factory() as db2:
+            result = await db2.execute(text("SELECT version_num FROM alembic_version"))
+            row = result.scalar_one_or_none()
+            current_rev = row if isinstance(row, str) else (row[0] if row else None)
+            if current_rev and (current_rev != head_rev):
+                errors.append(f"migration behind: current={current_rev}, head={head_rev}")
+            migration_version = current_rev or "none"
+    except Exception as e:
+        errors.append(f"migration: {e}")
+
+    # Check upload storage writable.
+    try:
+        test_path = settings.upload_path / ".health_check"
+        test_path.write_text("health")
+        test_path.unlink(missing_ok=True)
+    except Exception as e:
+        errors.append(f"upload_storage: {e}")
+
+    if errors:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "errors": errors,
+                "git_sha": settings.app_git_sha,
+            },
+        )
+
+    return {
+        "status": "ready",
+        "database": "ok",
+        "migration": migration_version,
+        "upload_storage": "ok",
+        "git_sha": settings.app_git_sha,
+    }
 
 
 # Import and mount routers
