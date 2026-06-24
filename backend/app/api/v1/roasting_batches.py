@@ -58,6 +58,24 @@ def _to_batch_response(batch: RoastingBatch) -> RoastingBatchResponse:
         allowed_actions=compute_allowed_actions(batch),
         green_bean_name=gb_name,
         purchase_batch_label=pb_label,
+        curve_file_summary=(
+            {
+                "curve_file_id": batch.active_curve.curve_file_id if batch.active_curve else None,
+                "curve_filename": batch.active_curve.curve_file.original_filename if (
+                    batch.active_curve and batch.active_curve.curve_file
+                ) else None,
+                "curve_uploaded_at": batch.active_curve.curve_file.uploaded_at.isoformat() if (
+                    batch.active_curve and batch.active_curve.curve_file
+                    and batch.active_curve.curve_file.uploaded_at
+                ) else None,
+                "curve_parse_status": batch.active_curve.curve_file.parse_status if (
+                    batch.active_curve and batch.active_curve.curve_file
+                ) else None,
+                "curve_parser_version": batch.active_curve.curve_file.parser_version if (
+                    batch.active_curve and batch.active_curve.curve_file
+                ) else None,
+            }
+        ),
     )
 
 
@@ -306,6 +324,51 @@ async def reopen_batch(
     # Re-fetch with eager-loaded relationships to avoid MissingGreenlet
     batch = await repo.get_detail(batch.id)
     return _to_batch_response(batch)
+
+
+@router.delete("/{batch_id}")
+async def delete_roasting_batch(
+    batch_id: str,
+    db: DBSessionDep = None,
+    _user: CurrentUserDep = None,
+):
+    """P1-5: Delete a planned batch safely. Only batches with status=planned
+    and no curves/evals/reviews can be physically deleted. Completed batches
+    must use the void endpoint instead."""
+    repo = RoastingBatchRepository(db)
+    batch = await repo.get_detail(batch_id)
+    if not batch:
+        raise NotFoundException("RoastingBatch", batch_id)
+
+    if batch.status != "planned":
+        if batch.status == "completed":
+            raise ConflictException(
+                code="BATCH_MUST_VOID",
+                message="已完成的批次不能直接删除，请使用作废操作",
+            )
+        raise ConflictException(
+            code="BATCH_NOT_DELETABLE",
+            message=f"状态为 {batch.status} 的批次不能删除",
+        )
+
+    # Guard: no curves, evaluations, questionnaires, or reviews attached.
+    from ...repositories.curves import CurveFileRepository
+    cf_repo = CurveFileRepository(db)
+    curve_files = await cf_repo.get_by_batch(batch_id)
+    if curve_files:
+        raise ConflictException(
+            code="BATCH_HAS_CURVE",
+            message="该批次已有曲线文件，不能直接删除",
+        )
+    if hasattr(batch, 'active_curve') and batch.active_curve:
+        raise ConflictException(
+            code="BATCH_HAS_CURVE",
+            message="该批次已有解析曲线，不能直接删除",
+        )
+
+    await db.delete(batch)
+    await db.flush()
+    return {"status": "deleted", "batch_id": batch_id}
 
 
 @router.post("/{batch_id}/void")

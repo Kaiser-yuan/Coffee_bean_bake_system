@@ -251,32 +251,81 @@ async def reparse_curve_file(
 @router.get("/curve-comparisons")
 async def compare_curves(
     batch_ids: str = Query(..., description="Comma-separated batch IDs"),
-    align_by: str = Query("charge", description="charge|yellowing|first_crack_start|drop"),
+    align_by: str = Query("charge", description="none|charge|yellowing|first_crack_start|drop"),
+    strict: bool = Query(True, description="true=422 on missing curve/event; false=fallback+warning"),
     db: DBSessionDep = None,
     _user: CurrentUserDep = None,
 ):
-    """Compare curves across multiple batches."""
-    ids = [bid.strip() for bid in batch_ids.split(",") if bid.strip()]
+    """Compare curves across multiple batches.
+
+    P0-2 strict validation:
+    - Requested batch IDs are de-duplicated and validated.
+    - Every requested batch must have a curve; missing ones are returned as
+      ``missing_batch_ids``. Under ``strict`` (default) a 422 is raised;
+      otherwise the available curves are compared and a warning is emitted.
+    - When ``align_by`` is an event and a curve lacks it, ``strict`` raises 422
+      with the offending batch_id + event_type; otherwise that batch falls back
+      to original time with a warning.
+    """
+    raw_ids = [bid.strip() for bid in batch_ids.split(",") if bid.strip()]
+    # De-duplicate while preserving order.
+    seen: set[str] = set()
+    ids: list[str] = []
+    for bid in raw_ids:
+        if bid not in seen:
+            seen.add(bid)
+            ids.append(bid)
     if len(ids) < 2:
         raise ValidationException("至少需要 2 个批次进行对比")
     if len(ids) > 5:
         raise ValidationException("最多支持 5 个批次同时对比")
 
-    if align_by not in ("charge", "yellowing", "first_crack_start", "drop"):
+    if align_by not in ("none", "charge", "yellowing", "first_crack_start", "drop"):
         raise ValidationException(f"不支持的 align_by: {align_by}")
 
     repo = RoastingCurveRepository(db)
     curves = await repo.get_by_batch_ids(ids)
 
-    if len(curves) < 2:
-        raise ValidationException("部分批次没有有效曲线")
-
-    # Order by input
+    # Map by batch id and find missing curves.
     curve_map = {c.roasting_batch_id: c for c in curves}
-    ordered = [curve_map[bid] for bid in ids if bid in curve_map]
+    missing_batch_ids = [bid for bid in ids if bid not in curve_map]
+    if missing_batch_ids:
+        if strict:
+            raise ValidationException(
+                f"以下批次没有有效曲线: {', '.join(missing_batch_ids)}",
+                details={"missing_batch_ids": missing_batch_ids},
+                status_code=422,
+            )
+        # Non-strict: drop missing batches and continue.
+        available_ids = [bid for bid in ids if bid in curve_map]
+        if len(available_ids) < 2:
+            raise ValidationException("部分批次没有有效曲线")
 
+    ordered = [curve_map[bid] for bid in ids if bid in curve_map]
     base = ordered[0]
     comparisons = ordered[1:]
 
-    result = compute_curve_comparison(base, comparisons, align_by=align_by)
+    try:
+        result = compute_curve_comparison(base, comparisons, align_by=align_by)
+    except Exception as exc:
+        # CurveAlignmentEventMissingException carries batch_id + event_type.
+        if not strict and align_by != "none":
+            # Fallback: retry with original-time alignment, but report which
+            # batch/event was missing.
+            from ...core.exceptions import CurveAlignmentEventMissingException
+            if isinstance(exc, CurveAlignmentEventMissingException):
+                result = compute_curve_comparison(base, comparisons, align_by="none")
+                result["warnings"].append({
+                    "code": "ALIGN_EVENT_MISSING",
+                    "severity": "warning",
+                    "batch_id": exc.details.get("batch_id", ""),
+                    "message": f"批次 {exc.details.get('batch_id', '')} 缺少对齐事件 {exc.details.get('missing_event', align_by)}，已改用原始时间",
+                })
+                result["align_by"] = "none"
+            else:
+                raise
+        else:
+            raise
+
+    result["missing_batch_ids"] = missing_batch_ids
     return result

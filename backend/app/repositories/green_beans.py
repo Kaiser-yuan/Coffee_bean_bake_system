@@ -52,3 +52,19 @@ class GreenBeanRepository(BaseRepository[GreenBean]):
 
         result = await self.db.execute(stmt)
         return list(result.unique().scalars().all())
+
+    async def get_by_id_with_purchase_count(self, green_bean_id: str) -> GreenBean | None:
+        """Get a green bean with count of its purchase batches (for delete/archive decision)."""
+        from sqlalchemy import select as _sel
+        row = await self.db.execute(
+            _sel(GreenBean, func.count(PurchaseBatch.id).label("purchase_count"))
+            .outerjoin(PurchaseBatch, PurchaseBatch.green_bean_id == GreenBean.id)
+            .where(GreenBean.id == green_bean_id)
+            .group_by(GreenBean.id)
+        )
+        result = row.first()
+        if result is None:
+            return None
+        gb = result[0]
+        gb.purchase_count = result[1]
+        return gb

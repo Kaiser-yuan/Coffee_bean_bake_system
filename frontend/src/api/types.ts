@@ -163,6 +163,13 @@ export type RoastingBatchResponseDto = {
   allowed_actions?: string[]
   green_bean_name: string | null
   purchase_batch_label: string | null
+  curve_file_summary?: {
+    curve_file_id: string | null
+    curve_filename: string | null
+    curve_uploaded_at: string | null
+    curve_parse_status: string | null
+    curve_parser_version: string | null
+  } | null
 }
 
 export type RoastingBatchListResponseDto = {
@@ -240,6 +247,8 @@ export type CurveComparisonResponseDto = {
     events: CurveEventDto[]
     points: CurvePointDto[]
   }>
+  warnings?: Array<{ code: string; severity: string; batch_id: string; message: string }>
+  missing_batch_ids?: string[]
 }
 
 export type QuestionnaireResponseDto = {

@@ -146,6 +146,8 @@ export interface CurvePoint {
   sampleIndex: number
   /** 经过时间（秒），从入豆开始 */
   elapsedSeconds: number
+  /** 对齐后时间（秒），由后端或图表适配层计算 — 仅对比响应中存在 */
+  alignedSeconds?: number
   /** 豆温 BT (°C) */
   beanTempCelsius?: number
   /** 环境温度 ET (°C) */

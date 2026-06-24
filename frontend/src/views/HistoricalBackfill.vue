@@ -162,7 +162,7 @@
                 <td>
                   <input v-if="row.parse_status === 'parsed'" v-model="row.inventory_effective" type="checkbox" />
                 </td>
-                <td>{{ fmt(row.summary?.total_time_seconds) }}</td>
+                <td>{{ formatDuration(row.summary?.total_time_seconds) }}</td>
                 <td>{{ fmt(row.summary?.development_ratio_percent, '%') }}</td>
                 <td>
                   <span v-if="row.parse_status === 'failed'" class="tag tag-fail">失败</span>
@@ -211,6 +211,7 @@ import type {
 } from '../api/bulkImports'
 import { invalidateRoastContext } from '../services/greenBeanContextService'
 import { addPurchaseBatch as apiAddPurchaseBatch } from '../services/greenBeanService'
+import { formatDuration } from '../utils/formatDuration'
 
 const loading = ref(false)
 const errorText = ref('')

@@ -278,33 +278,43 @@ def compute_curve_comparison(
     series = []
     base_metrics = None
 
+    # align_by="none" means no event alignment — use raw elapsed_seconds.
+    do_align = align_by != "none"
+
     for i, curve in enumerate(all_curves):
         points_data = curve.points.get("data", []) if curve.points else []
         events_data = curve.events.get("data", []) if curve.events else []
 
-        # Find alignment event time
-        align_ev = next(
-            (e for e in events_data if e.get("type") == align_by),
-            None
-        )
-        if align_ev is None:
-            # Event missing — raise clear business error
-            from ..core.exceptions import CurveAlignmentEventMissingException
-            raise CurveAlignmentEventMissingException(
-                batch_id=curve.roasting_batch_id,
-                event_type=align_by,
+        # Find alignment event time (only when aligning).
+        align_time = 0.0
+        if do_align:
+            align_ev = next(
+                (e for e in events_data if e.get("type") == align_by),
+                None
             )
-        align_time = align_ev.get("time_seconds") if align_ev else 0.0
+            if align_ev is None:
+                # Event missing — raise clear business error (endpoint may
+                # fall back to original time under strict=False).
+                from ..core.exceptions import CurveAlignmentEventMissingException
+                raise CurveAlignmentEventMissingException(
+                    batch_id=curve.roasting_batch_id,
+                    event_type=align_by,
+                )
+            align_time = align_ev.get("time_seconds") if align_ev else 0.0
 
-        # Add aligned_seconds to each point
+        # Add aligned_seconds to each point (raw time when not aligning).
         aligned_points = []
         for p in points_data:
             if isinstance(p, dict):
+                if do_align:
+                    aligned = round(get_aligned_seconds(
+                        p.get("elapsed_seconds", 0), align_time
+                    ), 2)
+                else:
+                    aligned = round(p.get("elapsed_seconds", 0), 2)
                 aligned_points.append({
                     **p,
-                    "aligned_seconds": round(get_aligned_seconds(
-                        p.get("elapsed_seconds", 0), align_time
-                    ), 2),
+                    "aligned_seconds": aligned,
                 })
 
         # Compute metrics including AUC and stage averages

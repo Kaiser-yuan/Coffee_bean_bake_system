@@ -26,7 +26,7 @@ class RoastingBatchRepository(BaseRepository[RoastingBatch]):
             select(RoastingBatch)
             .options(
                 selectinload(RoastingBatch.purchase_batch).selectinload(PurchaseBatch.green_bean),
-                selectinload(RoastingBatch.active_curve),
+                selectinload(RoastingBatch.active_curve).selectinload(RoastingCurve.curve_file),
                 selectinload(RoastingBatch.roast_level),
                 selectinload(RoastingBatch.questionnaires),
                 selectinload(RoastingBatch.review),
@@ -63,7 +63,7 @@ class RoastingBatchRepository(BaseRepository[RoastingBatch]):
             select(RoastingBatch)
             .options(
                 selectinload(RoastingBatch.purchase_batch).selectinload(PurchaseBatch.green_bean),
-                selectinload(RoastingBatch.active_curve),
+                selectinload(RoastingBatch.active_curve).selectinload(RoastingCurve.curve_file),
                 selectinload(RoastingBatch.curve_files),
                 selectinload(RoastingBatch.reminders),
                 selectinload(RoastingBatch.review),

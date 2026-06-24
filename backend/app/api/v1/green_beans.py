@@ -15,7 +15,7 @@ from ...services.inventory import calculate_remaining_stock, append_inventory_le
 from ...schemas.all_schemas import (
     GreenBeanMatchResponse, GreenBeanResponse,
     GreenBeanWithFirstPurchaseRequest, PurchaseBatchCreateRequest,
-    PurchaseBatchResponse,
+    PurchaseBatchResponse, GreenBeanUpdateRequest,
     GreenBeanTreeResponse, PurchaseBatchTreeResponse, RoastingBatchTreeResponse,
 )
 
@@ -326,3 +326,96 @@ async def add_purchase_batch(
         notes=pb.notes,
         remaining_weight_grams=remaining,
     )
+
+
+# -- Edit green bean --
+@router.patch("/{green_bean_id}")
+async def update_green_bean(
+    green_bean_id: str,
+    body: GreenBeanUpdateRequest,
+    db: DBSessionDep = None,
+    _user: CurrentUserDep = None,
+):
+    """P1-2: Update green bean metadata fields. All fields optional, at least one required."""
+    repo = GreenBeanRepository(db)
+    gb = await repo.get_by_id(green_bean_id)
+    if not gb:
+        raise NotFoundException("GreenBean", green_bean_id)
+
+    from datetime import datetime as _dt, timezone as _tz
+    if body.name is not None:
+        gb.name = body.name
+    if body.variety is not None:
+        term_repo = TermRepository(db)
+        vt = await term_repo.get_or_create_value("variety", body.variety)
+        gb.variety_term_id = vt.id
+    if body.process is not None:
+        term_repo = TermRepository(db)
+        pt = await term_repo.get_or_create_value("process", body.process)
+        gb.process_term_id = pt.id
+    if body.region is not None:
+        gb.region = body.region
+    if body.country is not None:
+        gb.country = body.country
+    if body.farm is not None:
+        gb.farm = body.farm
+    if body.elevation is not None:
+        gb.elevation = body.elevation
+    if body.brand is not None:
+        gb.brand = body.brand
+    if body.harvest_season is not None:
+        gb.harvest_season = body.harvest_season
+    if body.vendor_flavor_description is not None:
+        gb.vendor_flavor_description = body.vendor_flavor_description
+    gb.updated_at = _dt.now(_tz.utc)
+    await db.flush()
+    return _gb_to_response(gb)
+
+
+# -- Delete / archive green bean --
+@router.delete("/{green_bean_id}")
+async def delete_green_bean(
+    green_bean_id: str,
+    db: DBSessionDep = None,
+    _user: CurrentUserDep = None,
+):
+    """P1-2: Delete empty bean; archive bean with purchase data."""
+    repo = GreenBeanRepository(db)
+    gb = await repo.get_by_id_with_purchase_count(green_bean_id)
+    if not gb:
+        raise NotFoundException("GreenBean", green_bean_id)
+
+    purchase_count = gb.purchase_count if hasattr(gb, 'purchase_count') else 0
+    if purchase_count == 0:
+        # Physical delete for beans with no purchase batches.
+        await db.delete(gb)
+        await db.flush()
+        return {"status": "deleted", "green_bean_id": green_bean_id}
+
+    # Bean has purchase batches — archive instead of physical delete.
+    from datetime import datetime as _dt, timezone as _tz
+    gb.is_archived = True
+    gb.archived_at = _dt.now(_tz.utc)
+    gb.updated_at = gb.archived_at
+    await db.flush()
+    return {"status": "archived", "green_bean_id": green_bean_id}
+
+
+# -- Restore archived green bean --
+@router.post("/{green_bean_id}/restore")
+async def restore_green_bean(
+    green_bean_id: str,
+    db: DBSessionDep = None,
+    _user: CurrentUserDep = None,
+):
+    """P1-2: Restore an archived green bean."""
+    repo = GreenBeanRepository(db)
+    gb = await repo.get_by_id(green_bean_id)
+    if not gb:
+        raise NotFoundException("GreenBean", green_bean_id)
+    if not gb.is_archived:
+        raise ValidationException("该生豆未被归档")
+    gb.is_archived = False
+    gb.archived_at = None
+    await db.flush()
+    return {"status": "restored", "green_bean_id": green_bean_id}

@@ -15,8 +15,11 @@ export function getCurve(batchId: string): Promise<CurveResponseDto> {
   return apiRequest<CurveResponseDto>(`/roasting-batches/${batchId}/curve`, { auth: true })
 }
 
-export function compareCurves(batchIds: string[]): Promise<CurveComparisonResponseDto> {
-  const params = new URLSearchParams({ batch_ids: batchIds.join(','), align_by: 'charge' })
+export function compareCurves(
+  batchIds: string[],
+  alignBy: 'none' | 'charge' | 'yellowing' | 'first_crack_start' | 'drop' = 'charge',
+): Promise<CurveComparisonResponseDto> {
+  const params = new URLSearchParams({ batch_ids: batchIds.join(','), align_by: alignBy })
   return apiRequest<CurveComparisonResponseDto>(`/curve-comparisons?${params}`, { auth: true })
 }
 

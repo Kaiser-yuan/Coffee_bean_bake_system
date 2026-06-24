@@ -133,8 +133,8 @@
                       type="checkbox"
                     />
                   </td>
-                  <td>{{ fmt(row.summary?.total_time_seconds) }}</td>
-                  <td>{{ fmt(row.summary?.first_crack_start_seconds) }}</td>
+                  <td>{{ formatDuration(row.summary?.total_time_seconds) }}</td>
+                  <td>{{ formatDuration(row.summary?.first_crack_start_seconds) }}</td>
                   <td>{{ fmt(row.summary?.development_ratio_percent, '%') }}</td>
                   <td>
                     <span v-if="row.parse_status === 'failed'" class="tag tag-fail">解析失败</span>
@@ -210,6 +210,7 @@ import {
   type BulkImportCommitResponseDto,
   type TimeInferenceStrategy,
 } from '../../api/bulkImports'
+import { formatDuration } from '../../utils/formatDuration'
 
 const props = defineProps<{
   open: boolean

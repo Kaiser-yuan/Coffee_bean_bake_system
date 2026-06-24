@@ -145,6 +145,19 @@
               @click="compareMode = 'channel'"
             >按指标</button>
           </div>
+
+          <!-- 对齐方式选择 — 仅对比模式 (P0-2) -->
+          <div v-if="isCompare" class="legend-group">
+            <span class="legend-label">对齐</span>
+            <select v-model="compareAlignBy" class="align-select" @change="fetchCurves">
+              <option v-for="o in ALIGN_OPTIONS" :key="o.value" :value="o.value">{{ o.label }}</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- 对比诊断：缺失曲线 / 缺失事件 (P0-2) -->
+        <div v-if="isCompare && compareWarnings.length" class="compare-warnings">
+          <span v-for="(w, i) in compareWarnings" :key="i" class="warn-item">⚠ {{ w }}</span>
         </div>
 
         <!-- 图表主体 -->
@@ -170,9 +183,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { fetchCurves as fetchCurvesSvc, fetchCurve, uploadCurve } from '../services/curveService'
+import { fetchCurves as fetchCurvesSvc, fetchCurve, uploadCurve, getLastComparisonWarnings } from '../services/curveService'
 import { ApiError } from '../api/http'
 import { createQuestionnaire as createQuestionnaireSvc } from '../services/questionnaireService'
 import { fetchRoastContext, getGreenBeanByBatch, invalidateRoastContext, type RoastContext } from '../services/greenBeanContextService'
@@ -197,6 +210,19 @@ const compareMode = ref<'batch' | 'channel'>('batch')
 const questionnaireCreated = ref(false)
 const questionnaireStatusText = ref('')
 const roastContext = ref<RoastContext>({ greenBeans: [], purchaseBatches: [], roastingBatches: [] })
+
+// Curve comparison alignment + diagnostics (P0-2).
+// compareAlignBy mirrors the backend align_by: none|charge|yellowing|first_crack_start|drop.
+const compareAlignBy = ref<'none' | 'charge' | 'yellowing' | 'first_crack_start' | 'drop'>('charge')
+const compareWarnings = ref<string[]>([])
+
+const ALIGN_OPTIONS: { value: typeof compareAlignBy.value; label: string }[] = [
+  { value: 'none', label: '原始时间' },
+  { value: 'charge', label: '入豆' },
+  { value: 'yellowing', label: '转黄' },
+  { value: 'first_crack_start', label: '一爆开始' },
+  { value: 'drop', label: '出豆' },
+]
 
 // 指标通道定义 — 单锅：指标颜色+线型；多锅：批次颜色+指标线型
 const channels = ref([
@@ -279,18 +305,27 @@ function toggleBatch(index: number) {
 }
 
 async function fetchCurves() {
+  // Dispose any previous ECharts instance first: on re-upload / batch switch
+  // the old container is destroyed, so a stale instance would draw nowhere.
+  chart?.dispose()
+  chart = null
+
   loading.value = true
   error.value = false
   loadError.value = '请确认后端服务和曲线数据状态。'
+  let shouldRender = false
+
   try {
     const allCurves = batchIds.value.length > 1
-      ? await fetchCurvesSvc(batchIds.value)
+      ? await fetchCurvesSvc(batchIds.value, compareAlignBy.value)
       : [await fetchCurve(batchIds.value[0])].filter(Boolean) as RoastingCurve[]
-    curves.value = allCurves.filter(c => batchIds.value.includes(c.roastingBatchId))
     curves.value = batchIds.value
-      .map(id => curves.value.find(c => c.roastingBatchId === id))
+      .map(id => allCurves.find(c => c.roastingBatchId === id))
       .filter(Boolean) as RoastingCurve[]
     batchVisible.value = curves.value.map(() => true)
+
+    // Surface backend comparison warnings (missing curves / events) for the user.
+    compareWarnings.value = getLastComparisonWarnings()
 
     // Check if questionnaire already exists
     if (!isCompare.value && currentBatch.value) {
@@ -303,13 +338,19 @@ async function fetchCurves() {
       }
     }
 
-    await nextTick()
-    renderChart()
+    shouldRender = curves.value.length > 0
   } catch (e) {
     error.value = true
     loadError.value = e instanceof ApiError ? e.message : '曲线加载失败'
   } finally {
+    // End loading FIRST so the v-if container is mounted before we draw.
     loading.value = false
+  }
+
+  // Only render after the container is back in the DOM.
+  if (shouldRender) {
+    await nextTick()
+    renderChart()
   }
 }
 
@@ -349,6 +390,13 @@ function renderChart() {
   const gridLeft = 60
   const gridTop = 10
 
+  // X-axis value per point. In comparison mode with an alignment event,
+  // use aligned_seconds (relative to the event) so curves overlay; fall back
+  // to elapsed_seconds otherwise. Single-pot mode always uses elapsed_seconds.
+  const useAlign = isCompare.value && compareAlignBy.value !== 'none'
+  const xOf = (p: { elapsedSeconds: number; alignedSeconds?: number }) =>
+    useAlign ? (p.alignedSeconds ?? p.elapsedSeconds) : p.elapsedSeconds
+
   const builtSeries: any[] = []
 
   if (!isCompare.value) {
@@ -356,7 +404,7 @@ function renderChart() {
     visibleChannels.forEach(ch => {
       curves.value.forEach(curve => {
         const points = curve.points
-        const values = points.map(p => [p.elapsedSeconds, p[ch.key as keyof typeof p]])
+        const values = points.map(p => [xOf(p), p[ch.key as keyof typeof p]])
           .filter(v => v[1] !== undefined && v[1] !== null)
 
         const isStep = ['heatingPowerPercent', 'smokeDamperPercent', 'rollerPercent'].includes(ch.key)
@@ -387,7 +435,7 @@ function renderChart() {
       curves.value.forEach((curve, bi) => {
         if (!batchVisible.value[bi]) return
         const points = curve.points
-        const values = points.map(p => [p.elapsedSeconds, p[ch.key as keyof typeof p]])
+        const values = points.map(p => [xOf(p), p[ch.key as keyof typeof p]])
           .filter(v => v[1] !== undefined && v[1] !== null)
 
         const isStep = ['heatingPowerPercent', 'smokeDamperPercent', 'rollerPercent'].includes(ch.key)
@@ -418,7 +466,7 @@ function renderChart() {
     curves.value.forEach((curve, bi) => {
       if (!batchVisible.value[bi]) return
       const points = curve.points
-      const values = points.map(p => [p.elapsedSeconds, p[singleChannel.key as keyof typeof p]])
+      const values = points.map(p => [xOf(p), p[singleChannel.key as keyof typeof p]])
         .filter(v => v[1] !== undefined && v[1] !== null)
 
       builtSeries.push({
@@ -507,9 +555,21 @@ function renderChart() {
 }
 
 watch(() => route.params, fetchCurves)
+
+function handleResize() {
+  chart?.resize()
+}
+
 onMounted(async () => {
+  window.addEventListener('resize', handleResize)
   await fetchRoastContext().then(ctx => { roastContext.value = ctx })
   await fetchCurves()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleResize)
+  chart?.dispose()
+  chart = null
 })
 </script>
 
@@ -675,6 +735,26 @@ onMounted(async () => {
 }
 
 .btn-xs { height: 24px; padding: 0 var(--sp-2); font-size: var(--fs-xs); }
+
+.align-select {
+  height: 24px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-default);
+  background: var(--surface);
+  font-size: var(--fs-xs);
+  color: var(--text-primary);
+}
+
+.compare-warnings {
+  padding: var(--sp-2) var(--sp-4);
+  border-top: 1px solid var(--border-default);
+  background: var(--warning-subtle);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+.warn-item { font-size: var(--fs-xs); color: var(--warning); }
 
 .btn-primary { background: var(--primary); color: #fff; border-color: var(--primary); }
 .btn-primary:hover { background: var(--primary-hover); }

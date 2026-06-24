@@ -81,6 +81,9 @@ class GreenBean(Base):
     harvest_season: Mapped[str | None] = mapped_column(String(64))
     vendor_flavor_description: Mapped[str | None] = mapped_column(Text)
     first_created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     # relationships
     variety = relationship("StandardTerm", foreign_keys=[variety_term_id])

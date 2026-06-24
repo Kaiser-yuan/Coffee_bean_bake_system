@@ -206,7 +206,10 @@
             </div>
             <div class="form-row">
               <label class="form-label">产季</label>
-              <input v-model="form.season" type="text" class="input" placeholder="例如：2025 产季" />
+              <select v-model="form.season" class="select">
+                <option value="">— 未填写 —</option>
+                <option v-for="year in HARVEST_YEARS" :key="year" :value="String(year)">{{ year }} 产季</option>
+              </select>
             </div>
             <div class="form-row">
               <label class="form-label">农场</label>
@@ -339,6 +342,9 @@ import LoadingState from '../components/common/LoadingState.vue'
 import ErrorState from '../components/common/ErrorState.vue'
 import EmptyState from '../components/common/EmptyState.vue'
 import BulkCsvImportDialog from '../components/roasting/BulkCsvImportDialog.vue'
+
+const currentYear = new Date().getFullYear()
+const HARVEST_YEARS = Array.from({ length: 20 }, (_, i) => currentYear + 1 - i)
 
 const router = useRouter()
 const loading = ref(false)

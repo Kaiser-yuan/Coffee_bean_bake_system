@@ -338,6 +338,7 @@ def _build_preview_summary(parsed) -> dict:
         "yellowing_seconds": round(events_by_type["yellowing"].time_seconds, 2)
         if "yellowing" in events_by_type else None,
         "first_crack_start_seconds": round(fc_start.time_seconds, 2) if fc_start else None,
+        "development_time_seconds": dev_time,
         "development_ratio_percent": dev_ratio,
         "auc_bt_above_100": auc,
     }

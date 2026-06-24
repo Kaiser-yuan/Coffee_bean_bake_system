@@ -5,6 +5,7 @@ Field naming: snake_case, matching DB and REST API.
 from datetime import datetime
 from typing import Annotated, Literal
 from pydantic import BaseModel, Field, StringConstraints, model_validator
+import re
 
 
 # ============================================================
@@ -102,7 +103,11 @@ class GreenBeanWithFirstPurchaseRequest(BaseModel):
     farm: str | None = None
     elevation: str | None = None
     brand: str | None = None
-    harvest_season: str | None = None
+    harvest_season: str | None = Field(
+        default=None,
+        description="四位年份，1900..当前+1，可为空",
+        pattern=r"^(19\d{2}|20\d{2})$",
+    )
     vendor_flavor_description: str | None = None
 
     # Purchase batch fields
@@ -120,6 +125,36 @@ class GreenBeanWithFirstPurchaseRequest(BaseModel):
     def _validate_opening_stock_le_total(self):
         if self.opening_stock_grams is not None and self.opening_stock_grams > self.total_weight_grams:
             raise ValueError("期初库存不能超过原采购总重量")
+        return self
+
+
+class GreenBeanUpdateRequest(BaseModel):
+    """P1-2: Partial update of a green bean's metadata fields.
+    All fields are optional but at least one must be provided.
+    """
+    name: str | None = None
+    variety: str | None = None
+    process: str | None = None
+    region: str | None = None
+    country: str | None = None
+    farm: str | None = None
+    elevation: str | None = None
+    brand: str | None = None
+    harvest_season: str | None = Field(
+        default=None,
+        description="四位年份，1900..当前+1，可为空",
+        pattern=r"^(19\d{2}|20\d{2})$",
+    )
+    vendor_flavor_description: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_at_least_one_field(self):
+        fields = (
+            "name", "variety", "process", "region", "country", "farm",
+            "elevation", "brand", "harvest_season", "vendor_flavor_description",
+        )
+        if all(getattr(self, f, None) is None for f in fields):
+            raise ValueError("至少需要提供一个字段进行更新")
         return self
 
 
@@ -237,6 +272,15 @@ class BatchCompleteness(BaseModel):
     is_complete: bool
 
 
+class CurveFileSummary(BaseModel):
+    """P1-4: Lightweight curve file info embedded in roasting batch responses."""
+    curve_file_id: str | None = None
+    curve_filename: str | None = None
+    curve_uploaded_at: str | None = None
+    curve_parse_status: str | None = None
+    curve_parser_version: str | None = None
+
+
 class RoastingBatchResponse(BaseModel):
     id: str
     purchase_batch_id: str
@@ -260,6 +304,7 @@ class RoastingBatchResponse(BaseModel):
     allowed_actions: list[str] = Field(default_factory=list)
     green_bean_name: str | None = None
     purchase_batch_label: str | None = None
+    curve_file_summary: CurveFileSummary | None = None
 
     model_config = {"from_attributes": True}
 
@@ -365,6 +410,7 @@ class CurveComparisonResponse(BaseModel):
     metric_differences: list[MetricDifference] = Field(default_factory=list)
     event_time_differences: list[dict] = Field(default_factory=list)
     warnings: list[CurveComparisonWarning] = Field(default_factory=list)
+    missing_batch_ids: list[str] = Field(default_factory=list)
     calculation_meta: dict = Field(default_factory=dict)
 
 
