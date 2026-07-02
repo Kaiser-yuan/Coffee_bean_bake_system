@@ -79,10 +79,10 @@
       @retry="fetchBatches"
     />
 
-    <p v-if="!loading && !error && contextWarning" class="warning-banner">{{ contextWarning }}</p>
-
     <!-- 批次表格 -->
     <template v-else>
+      <p v-if="contextWarning" class="warning-banner">{{ contextWarning }}</p>
+
       <table class="batch-table" v-if="filteredBatches.length">
         <thead>
           <tr>
@@ -238,13 +238,6 @@
               <label class="form-label">实际烘焙日期</label>
               <input v-model="actionConfirmDate" type="date" class="input" />
             </div>
-            <div class="form-row">
-              <label class="form-label">烘焙度</label>
-              <select v-model="actionRoastLevel" class="select">
-                <option value="">选择烘焙度</option>
-                <option v-for="r in ROAST_LEVELS" :key="r" :value="r">{{ r }}</option>
-              </select>
-            </div>
             <div class="action-buttons">
               <button class="btn btn-primary" @click="doMarkComplete">确认完成</button>
               <button class="btn btn-danger btn-sm" @click="doDeleteBatch">删除计划</button>
@@ -289,7 +282,7 @@ import { useRoastingStore } from '../stores/roasting'
 import type { RoastingBatch, BatchDataCompleteness } from '../types'
 import { batchSourceLabels } from '../utils/batchLabels'
 import {
-  BEAN_PROCESSES, VARIETY_OPTIONS, REGION_OPTIONS, ROAST_LEVELS,
+  BEAN_PROCESSES, VARIETY_OPTIONS, REGION_OPTIONS,
   BATCH_STATUS_LABELS,
 } from '../types'
 import LoadingState from '../components/common/LoadingState.vue'
@@ -377,14 +370,12 @@ const actionModalOpen = ref(false)
 const actionConfirmWeightIn = ref(500)
 const actionConfirmDate = ref(new Date().toISOString().split('T')[0])
 const actionWeightOut = ref(0)
-const actionRoastLevel = ref('')
 
 function openBatchActions(b: RoastingBatch) {
   actionBatch.value = b
   actionConfirmWeightIn.value = b.beanWeightIn
   actionConfirmDate.value = new Date().toISOString().split('T')[0]
   actionWeightOut.value = b.beanWeightOut || 0
-  actionRoastLevel.value = b.roastLevel || ''
   actionModalOpen.value = true
 }
 
@@ -395,7 +386,6 @@ async function doMarkComplete() {
     actionConfirmWeightIn.value,
     actionConfirmDate.value,
   )
-  // Note: roast level is not yet part of the backend complete API; demo-only convenience.
   actionModalOpen.value = false
   invalidateRoastContext()
   await fetchBatches()
@@ -484,7 +474,7 @@ function clearFilters() {
 }
 
 function openCreateDialog() {
-  createForm.value.purchaseBatchId = availablePurchaseBatches.value[0]?.id || ''
+  ensureCreateFormDefaults()
   createOpen.value = true
 }
 
@@ -495,6 +485,26 @@ function onGreenBeanChange() {
   if (batches.length > 0) {
     createForm.value.purchaseBatchId = batches[0].id
   }
+}
+
+function ensureCreateFormDefaults() {
+  const selectedBeanStillActive = activeGreenBeans.value.some(
+    bean => bean.id === createForm.value.greenBeanId,
+  )
+  if (!selectedBeanStillActive) {
+    createForm.value.greenBeanId = activeGreenBeans.value[0]?.id || ''
+    createForm.value.purchaseBatchId = ''
+  }
+
+  const selectedPurchaseStillValid = roastContext.value.purchaseBatches.some(
+    p => p.id === createForm.value.purchaseBatchId && p.greenBeanId === createForm.value.greenBeanId,
+  )
+  if (selectedPurchaseStillValid) return
+
+  const batches = roastContext.value.purchaseBatches.filter(
+    p => p.greenBeanId === createForm.value.greenBeanId,
+  )
+  createForm.value.purchaseBatchId = batches[0]?.id || ''
 }
 
 async function onCreate() {
@@ -543,13 +553,7 @@ async function fetchBatches() {
       store.fetchBatches({ bean_archive_status: filters.value.beanArchiveStatus }),
       fetchGreenBeanTreeContext(),
     ])
-
-    if (batchResult.status === 'fulfilled') {
-      // Update create-form default only on first load
-      if (!createForm.value.greenBeanId && activeGreenBeans.value.length) {
-        createForm.value.greenBeanId = activeGreenBeans.value[0].id
-      }
-    } else {
+    if (batchResult.status !== 'fulfilled') {
       const reason = batchResult.reason
       error.value = true
       // Version mismatch / backend down gives a specific message.
@@ -568,6 +572,7 @@ async function fetchBatches() {
         ...contextResult.value,
         roastingBatches: [],
       }
+      ensureCreateFormDefaults()
     } else {
       console.error('Failed to load green bean context', contextResult.reason)
       contextWarning.value = `生豆信息加载失败：${toReadableError(contextResult.reason)}，批次列表仍可见`

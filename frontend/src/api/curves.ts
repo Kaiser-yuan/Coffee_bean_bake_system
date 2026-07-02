@@ -19,7 +19,11 @@ export function compareCurves(
   batchIds: string[],
   alignBy: 'none' | 'charge' | 'yellowing' | 'first_crack_start' | 'drop' = 'charge',
 ): Promise<CurveComparisonResponseDto> {
-  const params = new URLSearchParams({ batch_ids: batchIds.join(','), align_by: alignBy })
+  const params = new URLSearchParams({
+    batch_ids: batchIds.join(','),
+    align_by: alignBy,
+    strict: 'false',
+  })
   return apiRequest<CurveComparisonResponseDto>(`/curve-comparisons?${params}`, { auth: true })
 }
 

@@ -47,6 +47,20 @@
         >
           {{ questionnaireStatusText }}
         </button>
+        <button
+          v-if="!isCompare && currentBatch && questionnaireShareCode"
+          class="btn btn-secondary"
+          @click="copyQuestionnaireLink"
+        >
+          复制问卷链接
+        </button>
+        <button
+          v-if="!isCompare && currentBatch && questionnaireId"
+          class="btn btn-secondary"
+          @click="goToQuestionnaireDetail"
+        >
+          查看评价详情
+        </button>
         <span v-if="!isCompare && currentBatch && currentBatch.status !== 'completed'" class="text-xs text-tertiary">
           待批次完成后才可发起问卷
         </span>
@@ -209,6 +223,8 @@ const batchVisible = ref<boolean[]>([])
 const compareMode = ref<'batch' | 'channel'>('batch')
 const questionnaireCreated = ref(false)
 const questionnaireStatusText = ref('')
+const questionnaireId = ref('')
+const questionnaireShareCode = ref('')
 const roastContext = ref<RoastContext>({ greenBeans: [], purchaseBatches: [], roastingBatches: [] })
 
 // Curve comparison alignment + diagnostics (P0-2).
@@ -285,10 +301,57 @@ function goToReview() {
   }
 }
 
+const questionnaireShareUrl = computed(() => {
+  if (!questionnaireShareCode.value) return ''
+  const base = `${window.location.origin}${window.location.pathname}`
+  return `${base}${base.endsWith('/') ? '' : '/'}#/eval/${questionnaireShareCode.value}`
+})
+
+async function writeClipboardText(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch {
+      // Fall back for non-secure contexts such as plain http://server-ip.
+    }
+  }
+
+  const input = document.createElement('textarea')
+  input.value = text
+  input.setAttribute('readonly', 'true')
+  input.style.position = 'fixed'
+  input.style.left = '-9999px'
+  document.body.appendChild(input)
+  input.select()
+  const copied = document.execCommand('copy')
+  document.body.removeChild(input)
+  return copied
+}
+
+async function copyQuestionnaireLink() {
+  if (!questionnaireShareUrl.value) return
+  const copied = await writeClipboardText(questionnaireShareUrl.value)
+  window.alert(copied ? '已复制评价链接' : `复制失败，请手动复制：${questionnaireShareUrl.value}`)
+}
+
+function goToQuestionnaireDetail() {
+  if (questionnaireId.value) router.push(`/evaluations/${questionnaireId.value}`)
+}
+
+function applyQuestionnaireState(q: { id: string; shareCode: string; status: string } | null) {
+  questionnaireCreated.value = !!q
+  questionnaireId.value = q?.id || ''
+  questionnaireShareCode.value = q?.shareCode || ''
+  questionnaireStatusText.value = q
+    ? (q.status === 'open' ? '评价进行中' : '评价已关闭')
+    : ''
+}
+
 async function createQuestionnaire() {
   if (!currentBatch.value) return
-  await createQuestionnaireSvc(currentBatch.value.id)
-  questionnaireCreated.value = true
+  const questionnaire = await createQuestionnaireSvc(currentBatch.value.id)
+  applyQuestionnaireState(questionnaire)
   const updated = roastContext.value.roastingBatches.find(b => b.id === currentBatch.value?.id)
   if (updated) updated.evaluationStatus = 'open'
 }
@@ -332,10 +395,7 @@ async function fetchCurves() {
       const qs = await import('../services/questionnaireService')
       const allQ = await qs.fetchQuestionnaires()
       const existingQ = allQ.find(q => q.roastingBatchId === currentBatch.value!.id)
-      questionnaireCreated.value = !!existingQ
-      if (existingQ) {
-        questionnaireStatusText.value = existingQ.status === 'open' ? '评价进行中' : '评价已关闭'
-      }
+      applyQuestionnaireState(existingQ || null)
     }
 
     shouldRender = curves.value.length > 0
